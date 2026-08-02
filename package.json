@@ -25,7 +25,7 @@
     "test": "vitest run"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@browsercore/cookies": "^0.1.0",
