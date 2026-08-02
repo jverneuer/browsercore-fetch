@@ -2,6 +2,14 @@
   "name": "@browsercore/fetch",
   "version": "0.1.0",
   "description": "Developer-facing high-level HTTP API. Composes transport, tls, http1, http2, profiles, and cookies into a single fetch() surface.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jverneuer/browsercore-fetch.git"
+  },
+  "homepage": "https://github.com/jverneuer/browsercore-fetch#readme",
+  "bugs": {
+    "url": "https://github.com/jverneuer/browsercore-fetch/issues"
+  },
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
