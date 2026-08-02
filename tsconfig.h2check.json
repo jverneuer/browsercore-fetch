@@ -1,0 +1,14 @@
+{
+  "extends": "/Users/matte/projects/customcrawl/packages/fetch/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["/Users/matte/projects/customcrawl/packages/crypto/node_modules/.pnpm/@types+node@20.19.43/node_modules/@types"],
+    "types": ["node"],
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "/tmp/h2check-out"
+  },
+  "include": ["tests/h2-server.ts"],
+  "exclude": []
+}
