@@ -25,8 +25,8 @@ import type {
     Http1ConnectionId,
     HttpBodyKind,
 } from "@browsercore/http1";
-import { connectHttp2 } from "@browsercore/http2";
-import type { Http2Connection } from "@browsercore/http2";
+import { connectHttp2, Http2Settings } from "@browsercore/http2";
+import type { Http2Connection, Http2SettingsMap } from "@browsercore/http2";
 import type { CookieJar } from "@browsercore/cookies";
 import { createCookieJar } from "@browsercore/cookies";
 import type { CookieUrl } from "@browsercore/cookies";
@@ -50,6 +50,9 @@ import type {
 /** Default request timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/** Default pooled-connection idle eviction timeout in milliseconds. */
+const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
+
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */
 const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
 
@@ -72,6 +75,23 @@ export interface FetchClientOptions {
     readonly redirectPolicy?: RedirectPolicy;
     /** Default request timeout in ms. */
     readonly timeoutMs?: number;
+    /**
+     * Idle pool eviction timeout in ms. A pooled connection that goes unused
+     * for this duration is closed and evicted. Pass 0 to disable idle eviction.
+     * Default 30_000.
+     */
+    readonly idleTimeoutMs?: number;
+    /**
+     * Test seam: override how the transport for an origin is established.
+     * When provided, this is called instead of opening a real TCP transport +
+     * TLS handshake. It must return a {@link Transport} that speaks the
+     * bytes the HTTP layer expects on the *server* side of the connection
+     * (i.e. already past any TLS the production path would have applied).
+     *
+     * This exists so behavioral tests can drive the client against an
+     * in-process fake server without a real network or a finished TLS layer.
+     */
+    readonly transportFactory?: (host: string, port: number) => Promise<Transport> | Transport;
 }
 
 /** Public interface of an established fetch client. */
@@ -296,16 +316,60 @@ function applyHttp1Profile(
     }
 }
 
-/** Apply HTTP/2 profile settings to the connection's initial SETTINGS. */
+/**
+ * Translate a profile's named HTTP/2 settings into the numeric
+ * {@link Http2SettingsMap} the wire layer expects. The profile uses the
+ * human-readable {@link Http2Settings} names; the connection sends the RFC
+ * 9113 numeric identifiers. `enablePush` is a boolean in the profile but a
+ * 0/1 value on the wire, so we coerce it here.
+ */
+function profileHttp2Settings(profile: BrowserProfile): Http2SettingsMap {
+    const named = profile.http2.settings;
+    const wire: Http2SettingsMap = {};
+    if (named.headerTableSize !== undefined) {
+        wire[Http2Settings.HEADER_TABLE_SIZE] = named.headerTableSize;
+    }
+    if (named.enablePush !== undefined) {
+        // ENABLE_PUSH (§6.5.2) accepts only 0 or 1.
+        wire[Http2Settings.ENABLE_PUSH] = named.enablePush ? 1 : 0;
+    }
+    if (named.maxConcurrentStreams !== undefined) {
+        wire[Http2Settings.MAX_CONCURRENT_STREAMS] = named.maxConcurrentStreams;
+    }
+    if (named.initialWindowSize !== undefined) {
+        wire[Http2Settings.INITIAL_WINDOW_SIZE] = named.initialWindowSize;
+    }
+    if (named.maxFrameSize !== undefined) {
+        wire[Http2Settings.MAX_FRAME_SIZE] = named.maxFrameSize;
+    }
+    if (named.maxHeaderListSize !== undefined) {
+        wire[Http2Settings.MAX_HEADER_LIST_SIZE] = named.maxHeaderListSize;
+    }
+    return wire;
+}
+
+/**
+ * Apply HTTP/2 profile settings to a live connection. The connection's
+ * settings map is updated to reflect the profile so any observer (and the
+ * connection's own flow-control logic) sees the configured values. The
+ * initial SETTINGS frame is also seeded at connect time (see
+ * {@link establishConnection}) — this function covers settings applied after
+ * the connection preface.
+ *
+ * The public interface types `settings` as readonly; the implementation
+ * mutates it in place, so we write through a narrow mutable view.
+ */
 function applyHttp2Profile(
-    _conn: Http2Connection,
-    _profile: BrowserProfile,
+    conn: Http2Connection,
+    profile: BrowserProfile,
 ): void {
-    // PLAN: once Http2Connection exposes a settings-update API, apply
-    // profile.http2.settings here. For now the connection is constructed
-    // with the profile's initial settings at connect time.
-    void _conn;
-    void _profile;
+    const settings = profileHttp2Settings(profile);
+    // TODO: pushing updated SETTINGS to the *peer* requires the connection to
+    // send a new SETTINGS frame here. The current Http2Connection interface
+    // exposes no method to do that, so we only update the local view. Extend
+    // the interface with a `setSettings()` that emits a SETTINGS frame to
+    // apply this on the wire.
+    (conn as { settings: Http2SettingsMap }).settings = settings;
 }
 
 /** Build a {@link FetchResponse} from an HTTP/1.1 response. */
@@ -486,7 +550,11 @@ async function establishConnection(
     // Adapt the TLS connection to the Transport interface for the HTTP layer.
     const httpTransport = adaptTlsToTransport(tls);
     if (alpn === "h2") {
-        const conn = await connectHttp2({ transport: httpTransport });
+        // Seed the connection preface's SETTINGS frame with the profile's
+        // HTTP/2 settings so the peer observes our advertised limits
+        // (window size, max frame size, header table size, …) from the start.
+        const initialSettings = profileHttp2Settings(profile);
+        const conn = await connectHttp2({ transport: httpTransport, initialSettings });
         return { protocol: "http2", id: conn.id, conn };
     }
     // Default to HTTP/1.1 when ALPN is missing or selects http/1.1.
@@ -539,23 +607,106 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     function setPooled(url: ParsedUrl, conn: PooledConnection): void {
         const key = poolKey(url);
         pool.set(key, conn);
+        // (Re)start the idle TTL now that the connection is back in the pool.
+        startIdleTimer(key);
+    }
+
+    /** Per-pool-key idle timers. One timer per pooled connection (FIX 4). */
+    const idleTimers = new Map<PoolKey, ReturnType<typeof setTimeout>>();
+    const idleTimeoutMs = options?.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    /**
+     * The underlying transport for each pooled connection, keyed by pool key.
+     * The pooled connection object only exposes its protocol handle, so we
+     * track the transport separately to be able to force-close it on timeout/
+     * abort teardown (the connection's own graceful close() can deadlock
+     * against an in-flight request waiting on an open transport).
+     */
+    const poolTransports = new Map<PoolKey, Transport>();
+
+    /** Close a single pooled connection (protocol-aware), ignoring errors. */
+    async function closePooled(pooled: PooledConnection): Promise<void> {
+        switch (pooled.protocol) {
+            case "http1":
+                await pooled.conn.close({ kind: "client_close" });
+                break;
+            case "http2":
+                await pooled.conn.close();
+                break;
+            default:
+                assertNever(pooled);
+        }
+    }
+
+    /**
+     * Tear a connection down outside the normal request lifecycle — used by
+     * the timeout and abort paths. We force-close the *transport* rather than
+     * the connection's graceful close(): an HTTP/1.1 close() blocks until
+     * in-flight requests drain, but a request whose peer never replies will
+     * never drain while the transport stays open. Closing the transport
+     * unblocks the request (its read rejects), letting teardown complete.
+     */
+    function teardown(key: PoolKey): void {
+        clearIdleTimer(key);
+        const transport = poolTransports.get(key);
+        poolTransports.delete(key);
+        pool.delete(key);
+        if (transport !== undefined) {
+            void transport.close();
+        }
+    }
+
+    /** Evict one pooled connection: clear its timer, close it, drop it. */
+    async function evict(key: PoolKey): Promise<void> {
+        clearIdleTimer(key);
+        poolTransports.delete(key);
+        const pooled = pool.get(key);
+        pool.delete(key);
+        if (pooled !== undefined) {
+            await closePooled(pooled);
+        }
+    }
+
+    /** Clear (without resetting) the idle TTL for a pooled connection. */
+    function clearIdleTimer(key: PoolKey): void {
+        const existing = idleTimers.get(key);
+        if (existing !== undefined) {
+            clearTimeout(existing);
+            idleTimers.delete(key);
+        }
+    }
+
+    /**
+     * Start (or reset) the idle TTL for a pooled connection. When the timer
+     * fires the connection has been unused for `idleTimeoutMs`, so we evict it.
+     * A borrowed connection has its timer cleared (see `getConnection`);
+     * returning it to the pool restarts the timer (see `setPooled` and the
+     * dispatch success path).
+     */
+    function startIdleTimer(key: PoolKey): void {
+        if (idleTimeoutMs <= 0) {
+            // Idle eviction disabled.
+            return;
+        }
+        clearIdleTimer(key);
+        idleTimers.set(
+            key,
+            setTimeout(() => {
+                void evict(key);
+            }, idleTimeoutMs),
+        );
     }
 
     /** Close and evict every pooled connection. */
     async function drainPool(): Promise<void> {
         const entries = Array.from(pool.entries());
         pool.clear();
+        poolTransports.clear();
+        for (const timer of idleTimers.values()) {
+            clearTimeout(timer);
+        }
+        idleTimers.clear();
         for (const [, pooled] of entries) {
-            switch (pooled.protocol) {
-                case "http1":
-                    await pooled.conn.close({ kind: "client_close" });
-                    break;
-                case "http2":
-                    await pooled.conn.close();
-                    break;
-                default:
-                    assertNever(pooled);
-            }
+            await closePooled(pooled);
         }
     }
 
@@ -566,6 +717,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     ): Promise<PooledConnection> {
         const existing = getPooled(url);
         if (existing) {
+            // The connection is now in use — stop its idle TTL so it is not
+            // evicted mid-request. It is restarted when returned to the pool.
+            clearIdleTimer(poolKey(url));
             return existing;
         }
         const profile = profileId ? getProfile(profileId) : undefined;
@@ -612,14 +766,31 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                 acceptEncoding: "gzip, deflate, br",
             },
         };
-        const transport = await connectTransport({
-            host: url.host,
-            port: url.port,
-        });
-        const pooled = await establishConnection(transport, effectiveProfile, url.host);
-        if (pooled.protocol === "http2") {
-            applyHttp2Profile(pooled.conn, effectiveProfile);
-        }
+        const key = poolKey(url);
+        const { pooled, transport } = await (async (): Promise<{
+            pooled: PooledConnection;
+            transport: Transport;
+        }> => {
+            // Test seam: a caller-supplied factory yields a transport that
+            // already speaks the HTTP layer's bytes (past any TLS the
+            // production path would have applied). We connect HTTP/1.1
+            // directly — the fake servers in tests speak HTTP/1.1.
+            if (options?.transportFactory !== undefined) {
+                const transport = await options.transportFactory(url.host, url.port);
+                const conn = await connectHttp1({ transport });
+                return { pooled: { protocol: "http1", id: conn.id, conn }, transport };
+            }
+            const transport = await connectTransport({
+                host: url.host,
+                port: url.port,
+            });
+            const established = await establishConnection(transport, effectiveProfile, url.host);
+            if (established.protocol === "http2") {
+                applyHttp2Profile(established.conn, effectiveProfile);
+            }
+            return { pooled: established, transport };
+        })();
+        poolTransports.set(key, transport);
         setPooled(url, pooled);
         return pooled;
     }
@@ -676,7 +847,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     }
 
     /** Dispatch a single request (no redirect handling). */
-    async function dispatch(
+    function dispatch(
         url: ParsedUrl,
         opts: FetchOptions | undefined,
     ): Promise<FetchResponse> {
@@ -687,45 +858,94 @@ export function createClient(options?: FetchClientOptions): FetchClient {
         const method = opts?.method ?? "GET";
         const headers = buildHeaders(url, opts, profile);
         applyCookies(headers, jar, url);
+        const target = originString(url) + requestTarget(url);
 
-        // Honor an already-aborted signal before dispatching.
-        if (opts?.signal?.aborted) {
-            throw new FetchError("request aborted", { url: originString(url) + requestTarget(url) });
-        }
+        // The in-flight pooled connection, if one has been established. Both
+        // the timeout and abort handlers tear it down, so they share this ref.
+        let pooledRef: PooledConnection | undefined;
+        let rejectDispatch: ((err: Error) => void) | undefined;
+        let settled = false;
+
+        /** Reject the dispatch exactly once, then tear down the connection. */
+        const finishWithError = (err: Error): void => {
+            if (settled) return;
+            settled = true;
+            if (pooledRef !== undefined) {
+                // Force-close the transport to break any in-flight request
+                // (the connection's graceful close() can deadlock — see
+                // teardown()), then evict the connection from the pool.
+                teardown(poolKey(url));
+            }
+            rejectDispatch?.(err);
+        };
 
         const timeoutTimer = setTimeout(() => {
-            // The timeout is enforced by the connection layer; this is a
-            // safety net that rejects the dispatch promise.
+            // No-op until the dispatch promise exists; once it does, the timer
+            // rejects it with a timeout error and tears down the connection.
+            finishWithError(new FetchTimeoutError(timeoutMs));
         }, timeoutMs);
 
-        try {
-            const pooled = await getConnection(url, profileId);
-            let response: FetchResponse;
-            switch (pooled.protocol) {
-                case "http1":
-                    response = await dispatchHttp1(pooled.conn, url, method, headers, opts?.body);
-                    break;
-                case "http2":
-                    response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body);
-                    break;
-                default:
-                    assertNever(pooled);
+        // If the signal aborts while in-flight, cancel the request.
+        const onAbort = (): void => {
+            finishWithError(new FetchError("request aborted", { url: target }));
+        };
+        opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+        return new Promise<FetchResponse>((resolve, reject) => {
+            rejectDispatch = reject;
+            // Honor an already-aborted signal before dispatching. Doing this
+            // inside the executor guarantees `rejectDispatch` is wired up.
+            if (opts?.signal?.aborted) {
+                clearTimeout(timeoutTimer);
+                // The dispatch IIFE below never runs, so remove the abort
+                // listener here to avoid leaking it on a discarded signal.
+                opts.signal.removeEventListener("abort", onAbort);
+                finishWithError(new FetchError("request aborted", { url: target }));
+                return;
             }
-            // Store any Set-Cookie headers from the response.
-            const responseHeaders = new Map<string, string>();
-            for (const [k, v] of Object.entries(response.headers)) {
-                responseHeaders.set(k, v);
-            }
-            storeCookies(jar, responseHeaders, url);
-            return response;
-        } catch (err) {
-            if (err instanceof Error && err.message.includes("timed out")) {
-                throw new FetchTimeoutError(timeoutMs, { cause: err });
-            }
-            throw err;
-        } finally {
-            clearTimeout(timeoutTimer);
-        }
+            void (async (): Promise<void> => {
+                try {
+                    const pooled = await getConnection(url, profileId);
+                    // A slow connect can race with a timeout/abort: if the
+                    // dispatch already finished, don't dispatch on a stale
+                    // connection — just hand it back to the pool.
+                    if (settled) {
+                        startIdleTimer(poolKey(url));
+                        return;
+                    }
+                    pooledRef = pooled;
+                    let response: FetchResponse;
+                    switch (pooled.protocol) {
+                        case "http1":
+                            response = await dispatchHttp1(pooled.conn, url, method, headers, opts?.body);
+                            break;
+                        case "http2":
+                            response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body);
+                            break;
+                        default:
+                            assertNever(pooled);
+                    }
+                    // Store any Set-Cookie headers from the response.
+                    const responseHeaders = new Map<string, string>();
+                    for (const [k, v] of Object.entries(response.headers)) {
+                        responseHeaders.set(k, v);
+                    }
+                    storeCookies(jar, responseHeaders, url);
+                    if (settled) return;
+                    settled = true;
+                    // The connection is back in the pool (it was never
+                    // evicted, since borrowing cleared its timer) — restart
+                    // its idle TTL.
+                    startIdleTimer(poolKey(url));
+                    resolve(response);
+                } catch (err) {
+                    finishWithError(err instanceof Error ? err : new Error(String(err)));
+                } finally {
+                    clearTimeout(timeoutTimer);
+                    opts?.signal?.removeEventListener("abort", onAbort);
+                }
+            })();
+        });
     }
 
     /** Follow redirects for a response, returning the final response. */
