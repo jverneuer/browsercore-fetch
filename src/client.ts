@@ -17,6 +17,7 @@
 
 import { connect as connectTransport } from "@browsercore/transport";
 import type { Transport } from "@browsercore/transport";
+import { compression } from "@browsercore/compression";
 import { EventEmitter } from "node:events";
 import { connectTls } from "@browsercore/tls";
 import { connectHttp1 } from "@browsercore/http1";
@@ -222,13 +223,17 @@ function readContentEncoding(headers: ReadonlyMap<string, string>): string | und
     return undefined;
 }
 
-/** Decompress a body if `content-encoding` is set; otherwise return as-is. */
+/**
+ * Decompress a body if `content-encoding` is set; otherwise return as-is.
+ *
+ * Delegates to `@browsercore/compression`, which implements browser-tolerant
+ * decoding (notably the zlib/raw `deflate` fallback). No-op when no encoding.
+ */
 function decompressBody(body: Uint8Array, encoding: string | undefined): Uint8Array {
-    // PLAN: delegate to @browsercore/compression once it exists. For now, we
-    // return the bytes unchanged and rely on the caller's Accept-Encoding
-    // negotiation — the reference oracle (nodeZlib) lives in @browsercore/testing.
-    void encoding;
-    return body;
+    if (encoding === undefined || encoding === "") {
+        return body;
+    }
+    return compression.decompress(body, encoding);
 }
 
 /** A cookie URL derived from a {@link ParsedUrl} for {@link CookieJar} matching. */
@@ -1022,16 +1027,11 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     };
 }
 
-// --- Compression reference (nodeZlib) ----------------------------------
-// The @browsercore/testing package exports `nodeZlib` as the reference oracle
-// for gzip/deflate/brotli. We do NOT import it here — compression is a
-// layer concern, and the fetch client delegates to the protocol layer.
-// The reference is documented here so future maintainers know where to
-// find the canonical implementation:
-//   import { nodeZlib } from "@browsercore/testing";
-//   nodeZlib.gunzip(body)  // gzip decode
-//   nodeZlib.inflate(body) // deflate decode
-//   nodeZlib.brotliDecompress(body) // brotli decode
+// --- Compression -------------------------------------------------------
+// Body decompression delegates to @browsercore/compression (imported at the
+// top of this file as `compression`), which implements browser-tolerant
+// decoding — notably the zlib/raw `deflate` fallback. The reference oracle
+// used in tests is `nodeZlib` from @browsercore/testing.
 
 // --- 17-category browser-profile validation hooks ----------------------
 // The @browsercore/testing package exports 17 test categories (see

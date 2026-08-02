@@ -1,6 +1,6 @@
 {
   "name": "@browsercore/fetch",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "Developer-facing high-level HTTP API. Composes transport, tls, http1, http2, profiles, and cookies into a single fetch() surface.",
   "repository": {
     "type": "git",
@@ -20,7 +20,11 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -41,6 +45,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
+    "@browsercore/compression": "latest",
     "@browsercore/cookies": "latest",
     "@browsercore/http1": "latest",
     "@browsercore/http2": "latest",

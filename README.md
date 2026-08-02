@@ -50,8 +50,8 @@ try {
 @browsercore/fetch
   └─ @browsercore/http2  @browsercore/http1  @browsercore/cookies  @browsercore/profiles
         └─ @browsercore/tls
-              └─ @browsercore/crypto  @browsercore/transport
-                    └─ node:net / node:crypto
+              └─ @browsercore/crypto  @browsercore/compression  @browsercore/transport
+                    └─ node:net / node:crypto / node:zlib
 ```
 
 No package above `@browsercore/fetch` imports from below it.
