@@ -1,4 +1,4 @@
-# @network/fetch — Implementation Plan
+# @browsercore/fetch — Implementation Plan
 
 The developer-facing HTTP surface. Implement in this order; each step is
 independently testable.

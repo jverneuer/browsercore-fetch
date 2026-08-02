@@ -1,5 +1,5 @@
 /**
- * Small shared helpers for @network/fetch.
+ * Small shared helpers for @browsercore/fetch.
  *
  * Kept dependency-free so the pattern is reproducible without cross-package imports.
  */

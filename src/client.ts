@@ -15,23 +15,23 @@
  *      Set-Cookie per the active policy.
  */
 
-import { connect as connectTransport } from "@network/transport";
-import type { Transport } from "@network/transport";
+import { connect as connectTransport } from "@browsercore/transport";
+import type { Transport } from "@browsercore/transport";
 import { EventEmitter } from "node:events";
-import { connectTls } from "@network/tls";
-import { connectHttp1 } from "@network/http1";
+import { connectTls } from "@browsercore/tls";
+import { connectHttp1 } from "@browsercore/http1";
 import type {
     Http1Connection,
     Http1ConnectionId,
     HttpBodyKind,
-} from "@network/http1";
-import { connectHttp2 } from "@network/http2";
-import type { Http2Connection } from "@network/http2";
-import type { CookieJar } from "@network/cookies";
-import { createCookieJar } from "@network/cookies";
-import type { CookieUrl } from "@network/cookies";
-import { getProfile } from "@network/profiles";
-import type { BrowserProfile, ProfileId } from "@network/profiles";
+} from "@browsercore/http1";
+import { connectHttp2 } from "@browsercore/http2";
+import type { Http2Connection } from "@browsercore/http2";
+import type { CookieJar } from "@browsercore/cookies";
+import { createCookieJar } from "@browsercore/cookies";
+import type { CookieUrl } from "@browsercore/cookies";
+import { getProfile } from "@browsercore/profiles";
+import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { createId, assertNever } from "./utils.js";
 import {
     FetchError,
@@ -204,9 +204,9 @@ function readContentEncoding(headers: ReadonlyMap<string, string>): string | und
 
 /** Decompress a body if `content-encoding` is set; otherwise return as-is. */
 function decompressBody(body: Uint8Array, encoding: string | undefined): Uint8Array {
-    // PLAN: delegate to @network/compression once it exists. For now, we
+    // PLAN: delegate to @browsercore/compression once it exists. For now, we
     // return the bytes unchanged and rely on the caller's Accept-Encoding
-    // negotiation — the reference oracle (nodeZlib) lives in @network/testing.
+    // negotiation — the reference oracle (nodeZlib) lives in @browsercore/testing.
     void encoding;
     return body;
 }
@@ -803,18 +803,18 @@ export function createClient(options?: FetchClientOptions): FetchClient {
 }
 
 // --- Compression reference (nodeZlib) ----------------------------------
-// The @network/testing package exports `nodeZlib` as the reference oracle
+// The @browsercore/testing package exports `nodeZlib` as the reference oracle
 // for gzip/deflate/brotli. We do NOT import it here — compression is a
 // layer concern, and the fetch client delegates to the protocol layer.
 // The reference is documented here so future maintainers know where to
 // find the canonical implementation:
-//   import { nodeZlib } from "@network/testing";
+//   import { nodeZlib } from "@browsercore/testing";
 //   nodeZlib.gunzip(body)  // gzip decode
 //   nodeZlib.inflate(body) // deflate decode
 //   nodeZlib.brotliDecompress(body) // brotli decode
 
 // --- 17-category browser-profile validation hooks ----------------------
-// The @network/testing package exports 17 test categories (see
+// The @browsercore/testing package exports 17 test categories (see
 // docs/TEST-SUITE.md). The fetch client participates in these categories:
 //   - CookieBehavior: cookie jar round-trips Set-Cookie on responses.
 //   - Compression: content-encoding negotiation + body decompression.
@@ -822,10 +822,10 @@ export function createClient(options?: FetchClientOptions): FetchClient {
 //   - HeaderProfiles: profile-driven default headers + ordering.
 //   - ErrorHandling: typed errors (FetchTimeoutError, RedirectError, etc.).
 //   - ConnectionReuse: connection pooling across requests.
-//   - SessionResumption: TLS session resumption (via @network/tls).
+//   - SessionResumption: TLS session resumption (via @browsercore/tls).
 //   - Regression: regression tests for fetch-level bugs.
 //   - PerformanceBenchmarks: fetch-level throughput/latency benchmarks.
-// Each category is validated by a vitest suite in @network/testing; the
+// Each category is validated by a vitest suite in @browsercore/testing; the
 // fetch client's behavior is the system under test.
 
 void assertNever;

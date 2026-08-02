@@ -1,13 +1,13 @@
 /**
- * Domain types for @network/fetch.
+ * Domain types for @browsercore/fetch.
  *
  * The top-level developer-facing API. This package composes every lower-level
  * package (transport, tls, http1, http2, profiles, cookies) into a unified
  * fetch() surface with browser-accurate TLS + HTTP fingerprints.
  */
 
-import type { CookieJar } from "@network/cookies";
-import type { ProfileId } from "@network/profiles";
+import type { CookieJar } from "@browsercore/cookies";
+import type { ProfileId } from "@browsercore/profiles";
 
 /** Branded request identifier for logging / correlation. */
 export type FetchRequestId = string & { __brand: "FetchRequestId" };

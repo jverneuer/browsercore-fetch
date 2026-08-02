@@ -1,4 +1,4 @@
-# @network/fetch
+# @browsercore/fetch
 
 A developer-facing high-level HTTP API. Composes every lower-level package
 (transport, tls, http1, http2, profiles, cookies) into a single `fetch()` surface
@@ -8,12 +8,12 @@ with browser-accurate TLS + HTTP fingerprints.
 
 URL parsing, connection reuse, profile loading, redirect policy, cookie
 integration, and automatic protocol selection (h2 vs h1.1 via ALPN). Top of the
-dependency stack — every other `@network/*` package sits below this one.
+dependency stack — every other `@browsercore/*` package sits below this one.
 
 ## Public API
 
 ```ts
-import { fetch, createClient, FetchTimeoutError } from "@network/fetch";
+import { fetch, createClient, FetchTimeoutError } from "@browsercore/fetch";
 
 // One-shot convenience fetch (creates + closes a default client):
 const response = await fetch("https://example.com", { profile: "chrome-140" });
@@ -47,11 +47,11 @@ try {
 ## Dependency graph
 
 ```
-@network/fetch
-  └─ @network/http2  @network/http1  @network/cookies  @network/profiles
-        └─ @network/tls
-              └─ @network/crypto  @network/transport
+@browsercore/fetch
+  └─ @browsercore/http2  @browsercore/http1  @browsercore/cookies  @browsercore/profiles
+        └─ @browsercore/tls
+              └─ @browsercore/crypto  @browsercore/transport
                     └─ node:net / node:crypto
 ```
 
-No package above `@network/fetch` imports from below it.
+No package above `@browsercore/fetch` imports from below it.

@@ -1,5 +1,5 @@
 /**
- * Typed errors for @network/fetch.
+ * Typed errors for @browsercore/fetch.
  *
  * Fetch-level failures: timeouts, redirect loops, protocol negotiation errors.
  * Lower-level errors (TLS, transport) are wrapped via `cause`.

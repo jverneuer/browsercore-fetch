@@ -1,5 +1,5 @@
 /**
- * @network/fetch — public API surface.
+ * @browsercore/fetch — public API surface.
  *
  * The developer-facing HTTP API. Composes transport, tls, http1, http2,
  * profiles, and cookies. Most consumers should use the top-level `fetch()`

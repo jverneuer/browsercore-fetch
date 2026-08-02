@@ -1,5 +1,5 @@
 {
-  "name": "@network/fetch",
+  "name": "@browsercore/fetch",
   "version": "0.1.0",
   "description": "Developer-facing high-level HTTP API. Composes transport, tls, http1, http2, profiles, and cookies into a single fetch() surface.",
   "license": "MIT",
@@ -28,11 +28,11 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@network/cookies": "workspace:*",
-    "@network/http1": "workspace:*",
-    "@network/http2": "workspace:*",
-    "@network/profiles": "workspace:*",
-    "@network/tls": "workspace:*",
-    "@network/transport": "workspace:*"
+    "@browsercore/cookies": "^0.1.0",
+    "@browsercore/http1": "^0.1.0",
+    "@browsercore/http2": "^0.1.0",
+    "@browsercore/profiles": "^0.1.0",
+    "@browsercore/tls": "^0.1.0",
+    "@browsercore/transport": "^0.1.0"
   }
 }
