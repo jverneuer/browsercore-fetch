@@ -27,8 +27,7 @@ export type {
 
 export { assertNever } from "./utils.js";
 
-import { createClient } from "./client.js";
-import type { FetchClientOptions } from "./client.js";
+import { createClient, type FetchClientOptions } from "./client.js";
 import type { FetchOptions, FetchResponse } from "./types.js";
 
 /**

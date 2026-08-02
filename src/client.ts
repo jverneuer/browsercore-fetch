@@ -15,31 +15,21 @@
  *      Set-Cookie per the active policy.
  */
 
-import { connect as connectTransport } from "@browsercore/transport";
-import type { Transport } from "@browsercore/transport";
+import { connect as connectTransport, type Transport } from "@browsercore/transport";
 import { compression } from "@browsercore/compression";
 import { EventEmitter } from "node:events";
-import { connectTls } from "@browsercore/tls";
-import { connectHttp1 } from "@browsercore/http1";
-import type {
-    Http1Connection,
-    Http1ConnectionId,
-    HttpBodyKind,
-} from "@browsercore/http1";
-import { connectHttp2, Http2Settings } from "@browsercore/http2";
-import type { Http2Connection, Http2SettingsMap } from "@browsercore/http2";
-import type { CookieJar } from "@browsercore/cookies";
-import { createCookieJar } from "@browsercore/cookies";
-import type { CookieUrl } from "@browsercore/cookies";
-import { getProfile } from "@browsercore/profiles";
-import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
-import { createId, assertNever } from "./utils.js";
+import { connectTls, type TlsConnection } from "@browsercore/tls";
 import {
-    FetchError,
-    FetchTimeoutError,
-    ProtocolError,
-    RedirectError,
-} from "./errors.js";
+    connectHttp1,
+    type Http1Connection,
+    type Http1ConnectionId,
+    type HttpBodyKind,
+} from "@browsercore/http1";
+import { connectHttp2, Http2Settings, type Http2Connection, type Http2SettingsMap } from "@browsercore/http2";
+import { createCookieJar, type CookieJar, type CookieUrl } from "@browsercore/cookies";
+import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
+import { createId, assertNever } from "./utils.js";
+import { FetchError, FetchTimeoutError, RedirectError } from "./errors.js";
 import type {
     FetchOptions,
     FetchRequestId,
@@ -384,12 +374,12 @@ function buildResponse(
     statusText: string,
     headers: ReadonlyMap<string, string>,
     rawBody: Uint8Array,
+    encoding?: string,
 ): FetchResponse {
     const headerRecord: Record<string, string> = {};
     for (const [name, value] of headers) {
         headerRecord[name] = value;
     }
-    const encoding = readContentEncoding(headers);
     const body = decompressBody(rawBody, encoding);
 
     // The body can be consumed once. `clone()` captures the bytes so the
@@ -426,7 +416,7 @@ function buildResponse(
         clone(): FetchResponse {
             // A clone shares the same underlying bytes but has its own
             // `consumed` flag so each copy can be read independently.
-            return buildResponse(url, statusCode, statusText, headers, rawBody);
+            return buildResponse(url, statusCode, statusText, headers, rawBody, encoding);
         },
     };
 }
@@ -443,18 +433,29 @@ async function dispatchHttp1(
     if (!wireHeaders.has("host")) {
         wireHeaders.set("host", url.port === defaultPort(url.scheme) ? url.host : `${url.host}:${url.port}`);
     }
+    // http1's serializer appends the body verbatim and leaves content-length
+    // (or chunked transfer-encoding) to the caller. Without it the peer cannot
+    // delimit the body, so leftover bytes bleed into the next keep-alive
+    // request. Set content-length unless the caller supplied their own.
+    if (body !== undefined && !wireHeaders.has("content-length") && !wireHeaders.has("transfer-encoding")) {
+        const bodyBytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+        wireHeaders.set("content-length", String(bodyBytes.length));
+    }
     const response = await conn.request({
         method: method as never,
         url: requestTarget(url),
         headers: wireHeaders,
         body: bodyKind(body),
     });
+    // HTTP/1.1 decompresses the body in its `_decodeBody` based on the
+    // `content-encoding` header — pass `undefined` so we don't decompress twice.
     return buildResponse(
         originString(url) + requestTarget(url),
         response.statusCode,
         response.statusText,
         response.headers,
         response.body,
+        undefined,
     );
 }
 
@@ -487,12 +488,15 @@ async function dispatchHttp2(
         headers: wireHeaders,
         body: typeof body === "string" ? new TextEncoder().encode(body) : body,
     });
+    // HTTP/2 does not touch content-encoding, so the body arrives still
+    // compressed — decompress it here using the response's `content-encoding`.
     return buildResponse(
         originString(url) + requestTarget(url),
         response.statusCode,
         "",
         response.headers,
         response.body,
+        readContentEncoding(response.headers),
     );
 }
 
