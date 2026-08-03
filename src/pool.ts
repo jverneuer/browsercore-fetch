@@ -21,8 +21,7 @@ import {
     openTcpTransport,
     type PooledConnection,
 } from "./dispatch.js";
-import type { PoolKey } from "./url.js";
-import { poolKey } from "./url.js";
+import { poolKey, type PoolKey } from "./url.js";
 import type { ParsedUrl } from "./types.js";
 
 /** Default pooled-connection idle eviction timeout in milliseconds. */
@@ -61,6 +60,20 @@ export interface ConnectionPool {
     drain(): Promise<void>;
 }
 
+/** Close a single pooled connection (protocol-aware), ignoring errors. */
+async function closePooled(pooled: PooledConnection): Promise<void> {
+    switch (pooled.protocol) {
+        case "http1":
+            await pooled.conn.close({ kind: "client_close" });
+            break;
+        case "http2":
+            await pooled.conn.close();
+            break;
+        default:
+            assertNever(pooled);
+    }
+}
+
 /**
  * Create a {@link ConnectionPool}. `lookupProfile` is injected so the pool stays
  * decoupled from the profiles package's import path.
@@ -79,20 +92,6 @@ export function createPool(
      */
     const poolTransports = new Map<PoolKey, Transport>();
     const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-
-    /** Close a single pooled connection (protocol-aware), ignoring errors. */
-    async function closePooled(pooled: PooledConnection): Promise<void> {
-        switch (pooled.protocol) {
-            case "http1":
-                await pooled.conn.close({ kind: "client_close" });
-                break;
-            case "http2":
-                await pooled.conn.close();
-                break;
-            default:
-                assertNever(pooled);
-        }
-    }
 
     /** Clear (without resetting) the idle TTL for a pooled connection. */
     function clearIdleTimer(key: PoolKey): void {
@@ -159,18 +158,18 @@ export function createPool(
         const key = poolKey(url);
         let transport: Transport;
         let pooled: PooledConnection;
-        if (options.transportFactory !== undefined) {
+        if (options.transportFactory === undefined) {
+            // establishConnection applies the profile's HTTP/2 settings to the
+            // connection when ALPN negotiates h2 — no separate step needed here.
+            transport = await openTcpTransport(url);
+            pooled = await establishConnection(transport, profile, url.host);
+        } else {
             // Test seam: a caller-supplied factory yields a transport that
             // already speaks the HTTP layer's bytes (past any TLS the
             // production path would have applied). Fake servers in tests
             // speak HTTP/1.1.
             transport = await options.transportFactory(url.host, url.port);
             pooled = await establishHttp1OverTransport(transport);
-        } else {
-            // establishConnection applies the profile's HTTP/2 settings to the
-            // connection when ALPN negotiates h2 — no separate step needed here.
-            transport = await openTcpTransport(url);
-            pooled = await establishConnection(transport, profile, url.host);
         }
         poolTransports.set(key, transport);
         pool.set(key, pooled);
@@ -189,7 +188,8 @@ export function createPool(
                 return existing;
             }
             const profile = profileId ? (lookupProfile(profileId) ?? fallbackProfile) : fallbackProfile;
-            return establishAndStore(url, profile);
+            const pooled = await establishAndStore(url, profile);
+            return pooled;
         },
         release(url: ParsedUrl): void {
             startIdleTimer(poolKey(url));
@@ -205,9 +205,7 @@ export function createPool(
                 clearTimeout(timer);
             }
             idleTimers.clear();
-            for (const [, pooled] of entries) {
-                await closePooled(pooled);
-            }
+            await Promise.all(entries.map(([, pooled]) => closePooled(pooled)));
         },
     };
 }
