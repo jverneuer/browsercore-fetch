@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-    BODY_STRIP_ON_303,
+    METHODS_PRESERVED_ON_303,
     REDIRECT_STATUS_CODES,
     isRedirectStatus,
     resolveRedirectPolicy,
@@ -25,17 +25,20 @@ describe("isRedirectStatus", () => {
     });
 });
 
-describe("BODY_STRIP_ON_303", () => {
-    it("strips PUT/PATCH/DELETE bodies on a 303", () => {
-        expect(BODY_STRIP_ON_303.has("PUT")).toBe(true);
-        expect(BODY_STRIP_ON_303.has("PATCH")).toBe(true);
-        expect(BODY_STRIP_ON_303.has("DELETE")).toBe(true);
+describe("METHODS_PRESERVED_ON_303", () => {
+    it("preserves GET and HEAD across a 303 (not converted to GET)", () => {
+        expect(METHODS_PRESERVED_ON_303.has("GET")).toBe(true);
+        expect(METHODS_PRESERVED_ON_303.has("HEAD")).toBe(true);
     });
 
-    it("does not strip GET/HEAD/POST", () => {
-        expect(BODY_STRIP_ON_303.has("GET")).toBe(false);
-        expect(BODY_STRIP_ON_303.has("HEAD")).toBe(false);
-        expect(BODY_STRIP_ON_303.has("POST")).toBe(false);
+    it("converts POST/PUT/PATCH/DELETE to GET on a 303 (RFC 7231 §6.4.4)", () => {
+        // POST in particular must convert — the prior allowlist omitted it,
+        // violating the RFC. The denylist means every non-GET/HEAD method
+        // (including future body-carrying methods) converts by default.
+        expect(METHODS_PRESERVED_ON_303.has("POST")).toBe(false);
+        expect(METHODS_PRESERVED_ON_303.has("PUT")).toBe(false);
+        expect(METHODS_PRESERVED_ON_303.has("PATCH")).toBe(false);
+        expect(METHODS_PRESERVED_ON_303.has("DELETE")).toBe(false);
     });
 });
 

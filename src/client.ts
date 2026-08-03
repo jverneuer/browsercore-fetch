@@ -22,7 +22,7 @@ import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
 import { createPool, type ConnectionPool, type PoolOptions } from "./pool.js";
 import { applyHttp1Profile } from "./profile.js";
-import { BODY_STRIP_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
+import { METHODS_PRESERVED_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
 import { readSetCookie } from "./response.js";
 import { assertNever, createId } from "./utils.js";
 import { cookieUrl, defaultPort, originString, parseUrl, requestTarget, resolveRedirectUrl } from "./url.js";
@@ -327,9 +327,10 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                 }
                 const nextUrl = resolveRedirectUrl(initialUrl, location);
                 // 303 See Other: convert to GET and strip the body unless the
-                // original method was HEAD or GET.
+                // original method was HEAD or GET (RFC 7231 §6.4.4).
                 let nextOpts: FetchOptions | undefined = opts;
-                if (response.status === 303 && opts && BODY_STRIP_ON_303.has(opts.method ?? "GET")) {
+                const prevMethod = opts?.method ?? "GET";
+                if (response.status === 303 && opts && !METHODS_PRESERVED_ON_303.has(prevMethod)) {
                     const { body: _body, ...rest } = opts;
                     void _body;
                     nextOpts = { ...rest, method: "GET" };

@@ -388,8 +388,8 @@ describe("client — redirect policy: follow", () => {
 
 describe("client — 303 See Other body stripping", () => {
     it("converts PUT -> GET and drops the body on a 303", async () => {
-        // PUT is in BODY_STRIP_ON_303, so a 303 response converts it to GET
-        // and strips the body.
+        // PUT is not in METHODS_PRESERVED_ON_303, so a 303 response converts
+        // it to GET and strips the body (RFC 7231 §6.4.4).
         const seen: FakeRequest[] = [];
         const { factory, close } = installBackend((req) => {
             seen.push(req);
@@ -436,13 +436,12 @@ describe("client — 303 See Other body stripping", () => {
         }
     });
 
-    // NOTE: This documents the CURRENT behavior. Per RFC 7231 §6.4.4 and the
-    // code comment in client.ts ("convert to GET ... unless the original method
-    // was HEAD or GET"), a POST that receives a 303 should also be converted to
-    // GET. However BODY_STRIP_ON_303 = {PUT, PATCH, DELETE} omits POST, so POST
-    // is currently NOT converted. This looks like a genuine source bug —
-    // reported separately, not fixed per the task constraints.
-    it("does NOT convert POST -> GET on a 303 (documents current buggy behavior)", async () => {
+    // Per RFC 7231 §6.4.4 and the code comment in client.ts ("convert to GET
+    // ... unless the original method was HEAD or GET"), a POST that receives a
+    // 303 MUST be converted to GET with its body dropped. POST is no longer in
+    // a body-strip allowlist — METHODS_PRESERVED_ON_303 = {GET, HEAD} is a
+    // denylist, so POST (and every other non-GET/HEAD method) now converts.
+    it("converts POST -> GET and drops the body on a 303 (RFC 7231 §6.4.4)", async () => {
         const seen: FakeRequest[] = [];
         const { factory, close } = installBackend((req) => {
             seen.push(req);
@@ -458,17 +457,55 @@ describe("client — 303 See Other body stripping", () => {
                 body: "payload",
             });
             expect(resp.status).toBe(200);
-            // BUG: redirected request stays POST with a body.
             const redirected = seen[1]!;
-            expect(redirected.method).toBe("POST");
-            expect(redirected.body.length).toBeGreaterThan(0);
+            expect(redirected.method).toBe("GET");
+            expect(redirected.body.length).toBe(0);
         } finally {
             await client.close();
             await close();
         }
     });
 
-    it("preserves a HEAD method across a 303 (HEAD is not in BODY_STRIP_ON_303)", async () => {
+    // Integration: a POST that receives a 303 must follow the Location to a GET
+    // request with no body — the canonical 303 See Other flow (RFC 7231 §6.4.4),
+    // exercised end-to-end through the public client.fetch entrypoint.
+    it("POST -> 303 follows the Location as a bodyless GET", async () => {
+        const seen: FakeRequest[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req);
+            if (req.url === "/login") {
+                return { status: 303, headers: { location: "/dashboard" }, body: "" };
+            }
+            return { status: 200, statusText: "OK", body: "welcome" };
+        });
+        const client = createClient({ transportFactory: factory });
+        try {
+            const resp = await client.fetch("http://example.com/login", {
+                method: "POST",
+                headers: { "content-type": "application/x-www-form-urlencoded" },
+                body: "user=alice&pw=secret",
+            });
+            expect(resp.status).toBe(200);
+            expect(await resp.text()).toBe("welcome");
+
+            // First hop: the original POST with its body.
+            expect(seen[0]?.method).toBe("POST");
+            expect(seen[0]?.url).toBe("/login");
+            expect(seen[0]?.body.length).toBeGreaterThan(0);
+            // Second hop: GET to the Location target, with no body and no
+            // request-target carried over from the POST.
+            expect(seen[1]?.method).toBe("GET");
+            expect(seen[1]?.url).toBe("/dashboard");
+            expect(seen[1]?.body.length).toBe(0);
+            // Exactly two requests — no extra/replayed hops.
+            expect(seen.length).toBe(2);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("preserves a HEAD method across a 303 (HEAD is in METHODS_PRESERVED_ON_303)", async () => {
         const seen: FakeRequest[] = [];
         const { factory, close } = installBackend((req) => {
             seen.push(req);

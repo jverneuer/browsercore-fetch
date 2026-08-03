@@ -22,8 +22,16 @@ export type RedirectStatusCode = (typeof REDIRECT_STATUS_CODES)[number];
  */
 const REDIRECT_STATUS_SET: ReadonlySet<number> = new Set(REDIRECT_STATUS_CODES);
 
-/** Methods whose body must be stripped on a 303 redirect. */
-export const BODY_STRIP_ON_303 = new Set(["PUT", "PATCH", "DELETE"]);
+/**
+ * Methods preserved (NOT converted to GET) on a 303 See Other redirect.
+ *
+ * Per RFC 7231 §6.4.4, a 303 response converts the request to GET and drops
+ * the request body — except when the original method was HEAD (or already GET,
+ * which is a no-op). Every other method (POST, PUT, PATCH, DELETE, ...) is
+ * converted. Modeled as a denylist so any new body-carrying method is handled
+ * correctly by default rather than silently left intact.
+ */
+export const METHODS_PRESERVED_ON_303: ReadonlySet<string> = new Set(["GET", "HEAD"]);
 
 /** Whether `status` is one of the redirect-triggering status codes. */
 export function isRedirectStatus(status: number): status is RedirectStatusCode {
