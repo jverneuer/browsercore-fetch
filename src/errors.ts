@@ -1,19 +1,29 @@
 /**
  * Typed errors for @browsercore/fetch.
  *
- * Fetch-level failures: timeouts, redirect loops, protocol negotiation errors.
- * Lower-level errors (TLS, transport) are wrapped via `cause`.
+ * Errors are part of the API — every failure mode is an explicit type so callers
+ * can match on `kind` instead of parsing messages. Lower-level errors (TLS,
+ * transport) are wrapped via `cause`.
+ *
+ * Mirrors the @browsercore/transport error pattern: a base class carrying
+ * `kind`/`details`/`cause`, a subclass per failure domain, and an
+ * `ensureFetchError` wrapper for narrowing caught values.
  */
 
 import type { FetchRequestId } from "./types.js";
 
+/** Arbitrary structured detail carried alongside a fetch error message. */
+export type FetchErrorDetails = Record<string, unknown>;
+
 /** Base class for every fetch error. */
 export class FetchError extends Error {
     public readonly kind = "FetchError" as const;
+    public readonly details: FetchErrorDetails;
     /** The request id (when available) for correlation. */
     public readonly requestId: FetchRequestId | undefined;
     /** The URL the request targeted (when available). */
     public readonly url: string | undefined;
+    /** `Error | undefined` (not `?`) so assignment is valid under exactOptionalPropertyTypes. */
     public override readonly cause: Error | undefined;
 
     constructor(
@@ -21,6 +31,7 @@ export class FetchError extends Error {
         options?: {
             requestId?: FetchRequestId;
             url?: string;
+            details?: FetchErrorDetails;
             cause?: Error;
         },
     ) {
@@ -28,6 +39,7 @@ export class FetchError extends Error {
         this.name = new.target.name;
         this.requestId = options?.requestId;
         this.url = options?.url;
+        this.details = options?.details ?? {};
         this.cause = options?.cause;
     }
 }
@@ -92,4 +104,32 @@ export class ProtocolError extends Error {
         this.selectedProtocol = options?.selectedProtocol;
         this.cause = options?.cause;
     }
+}
+
+/** The request was aborted via an AbortSignal before it could complete. */
+export class AbortError extends FetchError {
+    constructor(message: string, options?: { url?: string; requestId?: FetchRequestId }) {
+        super(message, { ...options, details: { reason: "aborted" } });
+        this.name = "AbortError";
+    }
+}
+
+/**
+ * Narrow a caught value to a typed {@link FetchError}, or wrap it as one.
+ *
+ * Use at the boundary where an unknown rejection must be surfaced to the
+ * caller: `catch (e) { throw ensureFetchError(e, { url }) }`. A value already
+ * typed is returned unchanged; anything else is wrapped with `cause`.
+ */
+export function ensureFetchError(
+    e: unknown,
+    options?: { url?: string; requestId?: FetchRequestId },
+): FetchError {
+    if (e instanceof FetchError) {
+        return e;
+    }
+    if (e instanceof Error) {
+        return new FetchError(e.message, { ...options, cause: e });
+    }
+    return new FetchError(typeof e === "string" ? e : "unknown fetch error", options);
 }

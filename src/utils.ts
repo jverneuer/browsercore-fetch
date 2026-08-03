@@ -14,7 +14,7 @@ export function assertNever(x: never): never {
     throw new Error(`Unexpected value: ${JSON.stringify(x)}`);
 }
 
-/** Generate a unique FetchRequestId (not cryptographically random). */
-export function createId(prefix: "fetch" = "fetch"): string {
+/** Generate a unique id with the given prefix (not cryptographically random). */
+export function createId(prefix: string = "fetch"): string {
     return `${prefix}_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
