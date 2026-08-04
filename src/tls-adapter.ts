@@ -20,6 +20,9 @@ import { assertNever, createId } from "./utils.js";
  * layers expect. The adapter owns its own {@link TransportId} (independent of
  * the TLS session id) and projects the TLS lifecycle onto transport states.
  */
+// The `Transport` interface itself extends `EventEmitter`, so any Transport
+// implementation must extend it too — `EventTarget` cannot satisfy the contract.
+// eslint-disable-next-line unicorn/prefer-event-target
 export class TlsTransportAdapter extends EventEmitter implements Transport {
     public readonly id: TransportId;
     private readonly tls: TlsConnection;

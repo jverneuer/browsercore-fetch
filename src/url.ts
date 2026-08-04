@@ -21,12 +21,7 @@ export function poolKey(url: ParsedUrl): PoolKey {
 
 /** Pick the default port for a scheme. */
 export function defaultPort(scheme: "http" | "https"): number {
-    switch (scheme) {
-        case "http":
-            return 80;
-        case "https":
-            return 443;
-    }
+    return scheme === "http" ? 80 : 443;
 }
 
 /** Narrow a parsed-protocol string to the supported http/https scheme set. */
@@ -44,9 +39,9 @@ export function parseUrl(input: string): ParsedUrl {
         parsed = new URL(input);
     } catch (err) {
         const cause = err instanceof Error ? err : undefined;
-        throw cause !== undefined
-            ? new FetchError(`invalid URL: ${input}`, { url: input, cause })
-            : new FetchError(`invalid URL: ${input}`, { url: input });
+        throw cause === undefined
+            ? new FetchError(`invalid URL: ${input}`, { url: input })
+            : new FetchError(`invalid URL: ${input}`, { url: input, cause });
     }
     const scheme = parsed.protocol.replace(":", "");
     if (scheme !== "http" && scheme !== "https") {
