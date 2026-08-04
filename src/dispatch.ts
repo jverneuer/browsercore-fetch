@@ -21,7 +21,7 @@ import {
 import { connectHttp2, type Http2Connection } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
-import { ALPN_PROTOCOLS, applyHttp2Profile, profileHttp2Settings, profileToTlsConfig } from "./profile.js";
+import { ALPN_PROTOCOLS, profileHttp2Settings, profileToTlsConfig } from "./profile.js";
 import { adaptTlsToTransport } from "./tls-adapter.js";
 import { bodyKind, buildResponse, readContentEncoding } from "./response.js";
 import { defaultPort, originString, requestTarget } from "./url.js";
@@ -171,7 +171,8 @@ export async function establishConnection(
         // (window size, max frame size, header table size, …) from the start.
         const initialSettings = profileHttp2Settings(profile);
         const conn = await connectHttp2({ transport: httpTransport, initialSettings });
-        applyHttp2Profile(conn, profile);
+        // Settings are seeded into the connection preface via initialSettings
+        // above; they cannot be mutated post-connect (see profile.ts).
         return { protocol: "http2", id: conn.id, conn };
     }
     // Default to HTTP/1.1 when ALPN is missing or selects http/1.1.
