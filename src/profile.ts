@@ -91,13 +91,29 @@ const NAMED_GROUPS: ReadonlySet<string> = new Set([
     "Secp384r1MLKEM1024", // 0x12xx — future.
 ]);
 
-/** Set of valid signature algorithms (exhaustive over SignatureScheme). */
-const SIGNATURE_ALGORITHMS: ReadonlySet<SignatureScheme> = new Set([
+/**
+ * Allow-list of signature algorithms this layer accepts from browser profiles.
+ *
+ * Wider than the TLS layer's `SignatureScheme` union (which only covers the
+ * PKCS#1 / PSS schemes it can wire-encode). Real browser profiles also
+ * advertise EdDSA (ed25519) and older SHA-1/SHA-384 PKCS#1 variants — all of
+ * which must pass profile-to-config translation so the ClientHello can be built.
+ * Values not in this set throw in `asSignatureScheme` with a message pointing
+ * here.
+ */
+const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set([
+    // ECDSA (NIST curves).
     "ecdsa_secp256r1_sha256",
     "ecdsa_secp384r1_sha384",
+    // RSA-PSS.
     "rsa_pss_rsae_sha256",
     "rsa_pss_rsae_sha384",
+    // RSA-PKCS#1 (Chrome, Edge, Safari).
     "rsa_pkcs1_sha256",
+    "rsa_pkcs1_sha384",
+    "rsa_pkcs1_sha1",
+    // EdDSA (Firefox).
+    "ed25519",
 ]);
 
 /**
@@ -138,10 +154,21 @@ function asNamedGroup(value: string): NamedGroup {
     return value as NamedGroup;
 }
 
-/** Validate and narrow a string to a {@link SignatureScheme}, or throw {@link FetchError}. */
+/**
+ * Validate and narrow a string to a {@link SignatureScheme}, or throw {@link FetchError}.
+ *
+ * The allow-list is wider than the `SignatureScheme` union (which only covers
+ * the PKCS#1 / PSS schemes the wire layer can encode), so accepted values are
+ * cast to `SignatureScheme` here. Genuinely unknown schemes throw with a
+ * message that points at the `SIGNATURE_ALGORITHMS` allow-list.
+ */
 function asSignatureScheme(value: string): SignatureScheme {
-    if (!SIGNATURE_ALGORITHMS.has(value as SignatureScheme)) {
-        throw new FetchError(`invalid signature algorithm in profile: ${value}`, { details: { value } });
+    if (!SIGNATURE_ALGORITHMS.has(value)) {
+        throw new FetchError(
+            `invalid signature algorithm in profile: "${value}". ` +
+                `If this is a legitimate scheme, add it to the SIGNATURE_ALGORITHMS allow-list in fetch/src/profile.ts.`,
+            { details: { value } },
+        );
     }
     return value as SignatureScheme;
 }

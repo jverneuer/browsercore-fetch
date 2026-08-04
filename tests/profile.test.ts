@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Http2Settings } from "@browsercore/http2";
+import { getProfile, listProfiles } from "@browsercore/profiles";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import {
     ALPN_PROTOCOLS,
@@ -121,6 +122,27 @@ describe("profileToTlsConfig", () => {
         const cfg = profileToTlsConfig(profile, "h");
         expect(cfg.cipherSuites).toEqual(["TLS_AES_256_GCM_SHA384"]);
         expect(cfg.keyShareGroups).toEqual(["x25519", "secp256r1"]);
+    });
+
+    it("accepts every shipped browser profile without throwing (exhaustiveness)", () => {
+        // The allow-lists are wider than the wire-layer unions, so each registered
+        // profile's advertised cipher suites, groups, and signature schemes must all
+        // translate cleanly. A profile slipping through the allow-list would throw a
+        // FetchError here and surface as a crawl() failure at runtime.
+        for (const id of listProfiles()) {
+            const profile = getProfile(id);
+            expect(() => profileToTlsConfig(profile, "example.com")).not.toThrow();
+        }
+    });
+
+    it("produces non-empty TLS vectors for every shipped browser profile", () => {
+        for (const id of listProfiles()) {
+            const cfg = profileToTlsConfig(getProfile(id), "example.com");
+            expect(cfg.cipherSuites.length).toBeGreaterThan(0);
+            expect(cfg.keyShareGroups.length).toBeGreaterThan(0);
+            expect(cfg.signatureAlgorithms.length).toBeGreaterThan(0);
+            expect(cfg.supportedVersions.length).toBeGreaterThan(0);
+        }
     });
 });
 
