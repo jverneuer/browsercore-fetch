@@ -48,8 +48,6 @@ export interface FetchOptions {
     readonly cookieJar?: CookieJar;
     /** Abort signal — cancels the request when triggered. */
     readonly signal?: AbortSignal;
-    /** HTTP/2 stream priority hint (ignored over HTTP/1.1). */
-    readonly priority?: number;
 }
 
 /** A decoded Fetch response. Body can be consumed once. */
