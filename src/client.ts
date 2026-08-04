@@ -15,6 +15,9 @@
  *      Set-Cookie per the active policy.
  */
 
+// Top-of-stack orchestrator: legitimately composes many internal modules.
+/* eslint-disable import/max-dependencies */
+
 import type { Transport } from "@browsercore/transport";
 import { createCookieJar, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
@@ -227,7 +230,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
 
         /** Reject the dispatch exactly once, then tear down the connection. */
         const finishWithError = (err: Error): void => {
-            if (settled) return;
+            if (settled) {
+                return;
+            }
             settled = true;
             if (pooledRef !== undefined) {
                 pool.teardown(url);
@@ -246,7 +251,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
 
         return new Promise<FetchResponse>((resolve, reject) => {
             rejectDispatch = reject;
-            if (opts?.signal?.aborted) {
+            if (opts?.signal?.aborted === true) {
                 clearTimeout(timeoutTimer);
                 opts.signal.removeEventListener("abort", onAbort);
                 finishWithError(new AbortError("request aborted", { url: target }));
@@ -276,7 +281,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                         responseHeaders.set(k, v);
                     }
                     storeCookies(jar, responseHeaders, url);
-                    if (settled) return;
+                    if (settled) {
+                        return;
+                    }
                     settled = true;
                     pool.release(url);
                     resolve(response);

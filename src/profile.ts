@@ -8,15 +8,16 @@
  * as a {@link FetchError} rather than corrupting the handshake.
  */
 
-import type {
-    CipherSuite,
-    NamedGroup,
-    ProtocolVersion,
-    SignatureScheme,
+import {
+    TLS_1_2,
+    TLS_1_3,
+    type CipherSuite,
+    type NamedGroup,
+    type ProtocolVersion,
+    type SignatureScheme,
 } from "@browsercore/tls";
 import { Http2Settings, type Http2Connection, type Http2SettingsMap } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
-import { TLS_1_2, TLS_1_3 } from "@browsercore/tls";
 import { FetchError } from "./errors.js";
 
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */
