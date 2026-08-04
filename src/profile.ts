@@ -23,20 +23,72 @@ import { FetchError } from "./errors.js";
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */
 export const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
 
-/** Set of valid TLS 1.3 cipher suite names (exhaustive over the CipherSuite union). */
-const CIPHER_SUITES: ReadonlySet<CipherSuite> = new Set([
+/**
+ * Allow-list of cipher suites this layer accepts from browser profiles.
+ *
+ * Wider than the TLS layer's `CipherSuite` union (which only covers the TLS 1.3
+ * AEAD suites it can wire-encode). Real browser profiles also advertise TLS 1.2
+ * suites, GREASE placeholders, and legacy fallbacks — all of which must pass
+ * profile-to-config translation so the ClientHello can be built. Values not in
+ * this set throw in `asCipherSuite` with a message pointing here.
+ */
+const CIPHER_SUITES: ReadonlySet<string> = new Set([
+    // GREASE placeholder (RFC 8701) — inserted by Chrome/Edge profiles.
+    "TLS_GREASE_RESERVED_0",
+    // TLS 1.3 (AEAD + hash).
     "TLS_AES_128_GCM_SHA256",
     "TLS_AES_256_GCM_SHA384",
     "TLS_CHACHA20_POLY1305_SHA256",
     "TLS_AES_128_CCM_SHA256",
+    // TLS 1.2 ECDHE (GCM / ChaCha / CBC).
+    "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+    "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+    "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+    "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+    "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256",
+    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
+    "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+    "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+    "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384",
+    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
+    // TLS 1.2 DHE.
+    "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256",
+    "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+    "TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+    // TLS 1.2 RSA (older servers).
+    "TLS_RSA_WITH_AES_128_GCM_SHA256",
+    "TLS_RSA_WITH_AES_256_GCM_SHA384",
+    // TLS 1.2 CBC (Safari, older profiles).
+    "TLS_RSA_WITH_AES_128_CBC_SHA256",
+    "TLS_RSA_WITH_AES_256_CBC_SHA256",
+    "TLS_RSA_WITH_AES_128_CBC_SHA",
+    "TLS_RSA_WITH_AES_256_CBC_SHA",
+    // 3DES (legacy — some profiles still include it).
+    "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
 ]);
 
-/** Set of valid named groups for key share (exhaustive over NamedGroup). */
-const NAMED_GROUPS: ReadonlySet<NamedGroup> = new Set([
+/**
+ * Allow-list of named groups this layer accepts from browser profiles.
+ *
+ * Covers the standard NIST curves, the x25519/x448 EC groups, and the
+ * post-quantum hybrid groups Chrome 128+ advertises. Values not in this set
+ * throw in `asNamedGroup` with a message pointing here.
+ */
+const NAMED_GROUPS: ReadonlySet<string> = new Set([
     "secp256r1",
     "secp384r1",
+    "secp521r1",
     "x25519",
     "x448",
+    // Post-quantum hybrid groups (draft-ietf-tls-hybrid-design).
+    "X25519Kyber768",    // 0x6399 — Chrome 128.
+    "X25519MLKEM768",    // 0x11ec — Chrome 140.
+    "Secp256r1MLKEM768", // 0x11xx — future Chrome.
+    "Secp384r1MLKEM1024", // 0x12xx — future.
 ]);
 
 /** Set of valid signature algorithms (exhaustive over SignatureScheme). */
@@ -48,18 +100,40 @@ const SIGNATURE_ALGORITHMS: ReadonlySet<SignatureScheme> = new Set([
     "rsa_pkcs1_sha256",
 ]);
 
-/** Validate and narrow a string to a {@link CipherSuite}, or throw {@link FetchError}. */
+/**
+ * Validate and narrow a string to a {@link CipherSuite}, or throw {@link FetchError}.
+ *
+ * The allow-list is wider than the `CipherSuite` union (which only covers the
+ * TLS 1.3 AEAD suites the wire layer can encode), so accepted values are cast
+ * to `CipherSuite` here. Genuinely unknown suites throw with a message that
+ * points at the `CIPHER_SUITES` allow-list.
+ */
 function asCipherSuite(value: string): CipherSuite {
-    if (!CIPHER_SUITES.has(value as CipherSuite)) {
-        throw new FetchError(`invalid cipher suite in profile: ${value}`, { details: { value } });
+    if (!CIPHER_SUITES.has(value)) {
+        throw new FetchError(
+            `invalid cipher suite in profile: "${value}". ` +
+                `If this is a legitimate suite, add it to the CIPHER_SUITES allow-list in fetch/src/profile.ts.`,
+            { details: { value } },
+        );
     }
     return value as CipherSuite;
 }
 
-/** Validate and narrow a string to a {@link NamedGroup}, or throw {@link FetchError}. */
+/**
+ * Validate and narrow a string to a {@link NamedGroup}, or throw {@link FetchError}.
+ *
+ * The allow-list is wider than the `NamedGroup` union (which only covers the
+ * standard EC groups), so accepted values are cast to `NamedGroup` here.
+ * Genuinely unknown groups throw with a message that points at the
+ * `NAMED_GROUPS` allow-list.
+ */
 function asNamedGroup(value: string): NamedGroup {
-    if (!NAMED_GROUPS.has(value as NamedGroup)) {
-        throw new FetchError(`invalid key-share group in profile: ${value}`, { details: { value } });
+    if (!NAMED_GROUPS.has(value)) {
+        throw new FetchError(
+            `invalid key-share group in profile: "${value}". ` +
+                `If this is a legitimate group, add it to the NAMED_GROUPS allow-list in fetch/src/profile.ts.`,
+            { details: { value } },
+        );
     }
     return value as NamedGroup;
 }
