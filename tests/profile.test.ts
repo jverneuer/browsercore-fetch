@@ -4,7 +4,6 @@ import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import {
     ALPN_PROTOCOLS,
     applyHttp1Profile,
-    applyHttp2Profile,
     profileHttp2Settings,
     profileToTlsConfig,
 } from "../src/profile.js";
@@ -189,13 +188,4 @@ describe("applyHttp1Profile", () => {
     });
 });
 
-describe("applyHttp2Profile", () => {
-    it("is a no-op stub (settings are seeded at connect time)", () => {
-        // applyHttp2Profile intentionally does nothing post-connect; the
-        // connection's settings are seeded via initialSettings at establish time.
-        // The function must not throw and must return undefined.
-        const conn = { id: "c" } as never;
-        const profile = makeProfile();
-        expect(applyHttp2Profile(conn, profile)).toBeUndefined();
-    });
-});
+

@@ -16,7 +16,7 @@ import {
     type ProtocolVersion,
     type SignatureScheme,
 } from "@browsercore/tls";
-import { Http2Settings, type Http2Connection, type Http2SettingsMap } from "@browsercore/http2";
+import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
 
@@ -136,20 +136,14 @@ export function profileHttp2Settings(profile: BrowserProfile): Http2SettingsMap 
 }
 
 /**
- * Apply HTTP/2 profile settings to a live connection.
- *
- * The profile's settings are already seeded into the connection preface at
- * connect time via the `initialSettings` option (see establishConnection), so
- * the peer observes our advertised limits from the start. There is no separate
- * post-connect mutation: the {@link Http2Connection} interface types `settings`
- * as readonly, and mutating a local-only view that nothing reads has no effect
- * on the wire. Pushing an updated SETTINGS frame to the peer would require a
- * new interface method that does not yet exist.
+ * HTTP/2 settings are seeded into the connection preface at connect time via
+ * the `initialSettings` option (see {@link establishConnection}), so the peer
+ * observes our advertised limits from the start. There is no post-connect
+ * mutation: the {@link Http2Connection} interface types `settings` as readonly,
+ * and pushing an updated SETTINGS frame would require a new interface method
+ * that does not yet exist. Settings therefore cannot be changed once the
+ * connection is established.
  */
-export function applyHttp2Profile(_conn: Http2Connection, _profile: BrowserProfile): void {
-    void _conn;
-    void _profile;
-}
 
 /** Apply HTTP/1.1 profile default headers to a request header map (explicit headers win). */
 export function applyHttp1Profile(headers: Map<string, string>, profile: BrowserProfile): void {
