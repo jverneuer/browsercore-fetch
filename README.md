@@ -1,5 +1,9 @@
 # @browsercore/fetch
 
+[![npm version](https://img.shields.io/npm/v/@browsercore/fetch)](https://www.npmjs.com/package/@browsercore/fetch)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jverneuer/browsercore-fetch/main/coverage/badge.json)](https://github.com/jverneuer/browsercore-fetch/blob/main/COVERAGE.md)
+[![lint](https://img.shields.io/github/actions/workflow/status/jverneuer/browsercore-fetch/ci.yml?label=lint)](https://github.com/jverneuer/browsercore-fetch/actions/workflows/ci.yml)
+
 A developer-facing high-level HTTP API. Composes every lower-level package
 (transport, tls, http1, http2, profiles, cookies) into a single `fetch()` surface
 with browser-accurate TLS + HTTP fingerprints.
@@ -55,3 +59,44 @@ try {
 ```
 
 No package above `@browsercore/fetch` imports from below it.
+
+### HTTP/3
+
+`@browsercore/http3` and `@browsercore/quic` exist but are **not yet wired into
+this entrypoint** — `establishConnection` branches on ALPN to HTTP/2 or HTTP/1.1
+only. They will land in a future release.
+
+## Development
+
+This repo shares its build, lint, test, and CI config with every other
+`@browsercore/*` package via the [`@browsercore/dev`](https://github.com/jverneuer/browsercore-dev)
+package — `tsconfig.json` extends its base config, `vitest.config.ts` uses its
+`definePackageConfig` factory, and `oxlint.config.ts` extends its base ruleset.
+All commands run from this repo's directory:
+
+```sh
+npm install          # installs @browsercore/dev and the @browsercore/* siblings
+npm run build        # tsc -p tsconfig.build.json (emit to dist/)
+npm run typecheck    # tsc -p tsconfig.json --noEmit
+npm run lint         # oxlint --type-aware src/
+npm test             # vitest run
+```
+
+Run a **single test** with vitest's file filter:
+
+```sh
+npx vitest run tests/e2e-detection.test.ts
+```
+
+Run tests by **name pattern**:
+
+```sh
+npx vitest run -t "rejects a non-browser User-Agent"
+```
+
+Most engineers should consume this package from the top-level
+[`browsersmith`](https://github.com/jverneuer/browsercore) entrypoint instead.
+
+## License
+
+MIT
