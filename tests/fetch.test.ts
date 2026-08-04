@@ -70,7 +70,6 @@ describe("FetchOptions type shape", () => {
             followRedirects: true,
             maxRedirects: 10,
             timeoutMs: 30_000,
-            priority: 1,
         };
         expect(options.method).toBe("POST");
     });
