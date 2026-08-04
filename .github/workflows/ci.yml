@@ -7,14 +7,14 @@ on:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    environment: CI
     permissions:
       contents: write
       id-token: write
     outputs:
-      version: ${{ steps.version.outputs.current }}
       changed: ${{ steps.version.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -26,69 +26,37 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm run lint -- --deny-warnings
-      - run: npm test -- --coverage
-      - name: Enforce >=94% coverage (lines + branches + statements + funcs)
-        run: |
-          node -e "
-          const t = require('./coverage/coverage-summary.json').total;
-          const MIN = 94;
-          const checks = [
-            ['lines', t.lines.pct],
-            ['branches', t.branches.pct],
-            ['statements', t.statements.pct],
-            ['functions', t.functions.pct],
-          ];
-          let ok = true;
-          for (const [name, pct] of checks) {
-            const pass = pct >= MIN;
-            console.log((pass ? 'OK  ' : 'FAIL') + ' ' + name + ' ' + pct + '% (min ' + MIN + '%)');
-            if (!pass) ok = false;
-          }
-          if (!ok) { console.error('Coverage below ' + MIN + '% threshold'); process.exit(1); }
-          console.log('All coverage metrics >= ' + MIN + '%');
-          "
-      - name: Generate COVERAGE.md
-        run: npx coverage-md
+
+      # Coverage gate (MINIMUM=94). Runs the full suite under v8 coverage and
+      # enforces the 94% statement/branch/function/line thresholds defined in
+      # vitest.config.ts — exits non-zero if any metric falls short, failing CI.
+      - name: Enforce 94% coverage (MINIMUM=94)
+        run: npm test -- --coverage
+
       - run: npm run build
 
-      # Determine whether this push changed the package version vs. the previous
-      # commit on main. Publish + tag/release are gated on this so a push that
-      # only touches source/docs/CI never triggers an npm publish or a release.
-      - name: Detect version change
+      # Publish + tag/release only when the package version changed vs. the
+      # previous commit on main — a source/docs/CI-only push never publishes.
+      - name: Detect version or name change
         id: version
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          # Version at the parent commit (empty if this is the first commit).
+          CUR_VER=$(node -p "require('./package.json').version")
+          CUR_NAME=$(node -p "require('./package.json').name")
           PARENT=$(git rev-parse --short HEAD^ 2>/dev/null || echo "")
           if [ -z "$PARENT" ]; then
             CHANGED="true"
           else
-            PREVIOUS=$(git show "$PARENT:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
-            if [ "$CURRENT" != "$PREVIOUS" ]; then
+            PREV_VER=$(git show "$PARENT:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
+            PREV_NAME=$(git show "$PARENT:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).name" 2>/dev/null || echo "")
+            if [ "$CUR_VER" != "$PREV_VER" ] || [ "$CUR_NAME" != "$PREV_NAME" ]; then
               CHANGED="true"
             else
               CHANGED="false"
             fi
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
-          echo "Version $CURRENT (previous: ${PREVIOUS:-<none>}) — changed: $CHANGED"
-
-      - name: Commit COVERAGE.md
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # coverage/ is gitignored; force-add the generated report + badge
-          # so they are tracked in the repo root.
-          git add -f COVERAGE.md coverage/badge.json
-          if git diff --cached --quiet; then
-            echo "coverage report unchanged — nothing to commit"
-          else
-            git commit -m "ci: update coverage report [skip ci]"
-            git push origin HEAD:coverage --force-with-lease
-          fi
+          echo "$CUR_NAME@$CUR_VER (previous: ${PREV_NAME:-<none>}@${PREV_VER:-<none>}) — changed: $CHANGED"
 
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
@@ -100,8 +68,6 @@ jobs:
             exit 0
           fi
           npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create git tag and GitHub Release
         if: steps.version.outputs.changed == 'true'
