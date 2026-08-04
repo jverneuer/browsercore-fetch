@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
     Http1Connection,
     Http1ConnectionId,
@@ -21,6 +21,99 @@ import {
 import { FetchError } from "../src/errors.js";
 import { parseUrl } from "../src/url.js";
 import type { ParsedUrl } from "../src/types.js";
+import type { TlsConnection } from "@browsercore/tls";
+import type { Transport } from "@browsercore/transport";
+import type { BrowserProfile } from "@browsercore/profiles";
+
+// ---------------------------------------------------------------------------
+// Top-level mocks for the lower-level @browsercore/* packages. These let us
+// test establishConnection + openTcpTransport's ALPN-driven dispatch and TCP
+// transport open path without a real network. The vi.fn() instances are
+// configured per-test.
+// ---------------------------------------------------------------------------
+
+const mockConnectTls = vi.fn();
+const mockConnectHttp1 = vi.fn();
+const mockConnectHttp2 = vi.fn();
+const mockConnectTransport = vi.fn();
+
+vi.mock("@browsercore/tls", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@browsercore/tls")>();
+    return {
+        ...actual,
+        connectTls: (opts: unknown) => mockConnectTls(opts),
+    };
+});
+
+vi.mock("@browsercore/http1", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@browsercore/http1")>();
+    return {
+        ...actual,
+        connectHttp1: (opts: unknown) => mockConnectHttp1(opts),
+    };
+});
+
+vi.mock("@browsercore/http2", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@browsercore/http2")>();
+    return {
+        ...actual,
+        connectHttp2: (opts: unknown) => mockConnectHttp2(opts),
+    };
+});
+
+vi.mock("@browsercore/transport", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@browsercore/transport")>();
+    return {
+        ...actual,
+        connect: (opts: unknown) => mockConnectTransport(opts),
+    };
+});
+
+const fakeProfile = (): BrowserProfile => ({
+    id: "chrome" as const,
+    name: "Chrome",
+    version: "140.0.0",
+    tls: {
+        cipherSuites: ["TLS_AES_128_GCM_SHA256"],
+        extensionOrder: [0, 10, 11, 13, 16, 23, 27, 35, 43, 45, 51, 65281],
+        supportedVersions: ["TLS 1.3"],
+        keyShareGroups: ["x25519"],
+        signatureAlgorithms: ["ecdsa_secp256r1_sha256"],
+        grease: false,
+    },
+    http2: {
+        settings: {
+            headerTableSize: 65536,
+            enablePush: false,
+            maxConcurrentStreams: 100,
+            initialWindowSize: 6291456,
+            maxFrameSize: 16384,
+            maxHeaderListSize: 65536,
+        },
+        initialWindowSize: 6291456,
+        maxFrameSize: 16384,
+        headerTableSize: 65536,
+        weight: 256,
+    },
+    http1: {
+        defaultHeaders: { "user-agent": "test" },
+        headerOrder: [],
+        connection: "keep-alive",
+        acceptEncoding: "gzip, deflate, br",
+    },
+});
+
+function fakeTlsConn(alpnProtocol: string | undefined): TlsConnection {
+    const { EventEmitter } = require("node:events") as typeof import("node:events");
+    return Object.assign(new EventEmitter(), {
+        alpnProtocol,
+        id: "tls-fake",
+        state: { state: "open" },
+        write: vi.fn().mockResolvedValue(undefined),
+        read: vi.fn().mockResolvedValue({ payload: new Uint8Array() }),
+        close: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as TlsConnection;
+}
 
 /** Build a ParsedUrl from a string for dispatch calls. */
 function url(s: string): ParsedUrl {
@@ -319,10 +412,79 @@ describe("establishHttp1OverTransport", () => {
         stub.read = () => new Promise(() => {});
         stub.close = () => Promise.resolve();
 
+        mockConnectHttp1.mockReset();
+        mockConnectHttp1.mockResolvedValue({ id: "h1-stub", close: () => Promise.resolve() });
+
         const pooled = await establishHttp1OverTransport(stub);
         expect(pooled.protocol).toBe("http1");
         expect(typeof pooled.id).toBe("string");
         expect(pooled.conn).toBeDefined();
         await pooled.conn.close();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for establishConnection + openTcpTransport — these exercise the
+// ALPN-driven dispatch (h2 vs http/1.1) and the TCP transport open path.
+// We mock the lower-level @browsercore/* packages so we can drive the
+// branches without a real network.
+// ---------------------------------------------------------------------------
+
+import { establishConnection, openTcpTransport } from "../src/dispatch.js";
+
+describe("establishConnection — ALPN dispatch", () => {
+    it("negotiates h2 and returns an http2 pooled connection when ALPN selects h2", async () => {
+        mockConnectTls.mockReset();
+        mockConnectHttp1.mockReset();
+        mockConnectHttp2.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("h2"));
+        mockConnectHttp2.mockResolvedValue({ id: "h2-1", settings: {} });
+
+        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        expect(result.protocol).toBe("http2");
+        expect(mockConnectTls).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp1).not.toHaveBeenCalled();
+    });
+
+    it("falls back to http/1.1 when ALPN selects http/1.1", async () => {
+        mockConnectTls.mockReset();
+        mockConnectHttp1.mockReset();
+        mockConnectHttp2.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("http/1.1"));
+        mockConnectHttp1.mockResolvedValue({ id: "h1-1" });
+
+        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        expect(result.protocol).toBe("http1");
+        expect(mockConnectTls).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp2).not.toHaveBeenCalled();
+    });
+
+    it("falls back to http/1.1 when ALPN is undefined (no negotiated protocol)", async () => {
+        mockConnectTls.mockReset();
+        mockConnectHttp1.mockReset();
+        mockConnectHttp2.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn(undefined));
+        mockConnectHttp1.mockResolvedValue({ id: "h1-2" });
+
+        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        expect(result.protocol).toBe("http1");
+        expect(mockConnectTls).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
+        expect(mockConnectHttp2).not.toHaveBeenCalled();
+    });
+});
+
+describe("openTcpTransport", () => {
+    it("opens a TCP transport to the host/port from the URL", async () => {
+        mockConnectTransport.mockReset();
+        mockConnectTransport.mockResolvedValue({ id: "tcp-1" });
+
+        const parsed = parseUrl("https://example.com:8443/path");
+        const result = await openTcpTransport(parsed);
+        expect(result).toEqual({ id: "tcp-1" });
+        expect(mockConnectTransport).toHaveBeenCalledTimes(1);
+        expect(mockConnectTransport).toHaveBeenCalledWith({ host: "example.com", port: 8443 });
     });
 });

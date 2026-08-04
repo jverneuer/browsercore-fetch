@@ -99,6 +99,18 @@ describe("RedirectError", () => {
         expect(err.redirectCount).toBe(9);
         expect(err.kind).toBe("RedirectError");
     });
+
+    it("carries an optional cause", () => {
+        const cause = new Error("underlying");
+        const err = new RedirectError("loop", { cause });
+        expect(err.cause).toBe(cause);
+        expect(err.message).toBe("loop");
+    });
+
+    it("does not set cause on super when no cause is supplied", () => {
+        const err = new RedirectError("loop", { location: "https://x" });
+        expect(err.cause).toBeUndefined();
+    });
 });
 
 describe("ProtocolError", () => {
@@ -106,6 +118,27 @@ describe("ProtocolError", () => {
         const err = new ProtocolError("none");
         expect(err.offeredProtocols).toEqual([]);
         expect(err.selectedProtocol).toBeUndefined();
+    });
+
+    it("exposes offeredProtocols + selectedProtocol", () => {
+        const err = new ProtocolError("no overlap", {
+            offeredProtocols: ["h2", "http/1.1"],
+            selectedProtocol: "h2",
+        });
+        expect(err.offeredProtocols).toEqual(["h2", "http/1.1"]);
+        expect(err.selectedProtocol).toBe("h2");
+        expect(err.kind).toBe("ProtocolError");
+    });
+
+    it("carries an optional cause", () => {
+        const cause = new Error("handshake failed");
+        const err = new ProtocolError("none", { cause });
+        expect(err.cause).toBe(cause);
+    });
+
+    it("does not set cause on super when no cause is supplied", () => {
+        const err = new ProtocolError("none", { selectedProtocol: "http/1.1" });
+        expect(err.cause).toBeUndefined();
     });
 });
 

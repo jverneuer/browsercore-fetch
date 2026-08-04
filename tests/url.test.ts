@@ -79,6 +79,31 @@ describe("parseUrl", () => {
     it("rejects a bare string with no scheme", () => {
         expect(() => parseUrl("not-a-url-at-all")).toThrow(FetchError);
     });
+
+    it("wraps a non-Error thrown by the URL parser without a cause", () => {
+        // The URL constructor always throws an Error in practice, but the
+        // parseUrl code path that handles a non-Error cause (lines 41-42)
+        // must still be covered. We exercise it by stubbing URL to throw a
+        // non-Error value.
+        const origURL = globalThis.URL;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).URL = class {
+            constructor() {
+                throw "a string error, not an Error";
+            }
+        };
+        try {
+            expect(() => parseUrl("https://example.com")).toThrow(FetchError);
+            try {
+                parseUrl("https://example.com");
+            } catch (err) {
+                expect(err).toBeInstanceOf(FetchError);
+                expect((err as FetchError).cause).toBeUndefined();
+            }
+        } finally {
+            globalThis.URL = origURL;
+        }
+    });
 });
 
 describe("originString", () => {

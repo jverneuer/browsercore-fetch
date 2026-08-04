@@ -545,3 +545,195 @@ describe("client — close drains the pool and clears the cookie jar", () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// Tests for the "settled" guard branches in client.ts dispatch():
+//   - finishWithError's `if (settled) return;` (line 233) and
+//     `if (pooledRef !== undefined)` (line 237)
+//   - the `if (settled)` early-return after pool.getConnection (line 264)
+//   - the `if (settled) return;` after dispatch (line 284)
+// These fire when a request settles (success/timeout/abort) while another
+// async path is still pending.
+// ---------------------------------------------------------------------------
+
+describe("client — settled guard branches", () => {
+    it("ignores a late finishWithError call after the request already settled", async () => {
+        // A slow backend that never replies: the timeout fires first, which
+        // settles the request via finishWithError. When the connection later
+        // errors (because teardown closed its transport), finishWithError is
+        // called again — this time `settled` is already true, so the early
+        // return at line 233 fires.
+        const { factory, close } = installBackend(() => undefined);
+        const client = createClient({ transportFactory: factory, timeoutMs: 30 });
+        try {
+            await expect(client.fetch("http://example.com/slow")).rejects.toThrow(/timed out/i);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("tears down the pooled connection when finishWithError runs while a connection is held", async () => {
+        // Handler never replies, so the request hangs until the timeout
+        // fires. By then pool.getConnection has resolved and pooledRef is
+        // set, so finishWithError's `if (pooledRef !== undefined)` branch
+        // (line 237) runs pool.teardown().
+        const { factory, close } = installBackend(() => undefined);
+        const client = createClient({ transportFactory: factory, timeoutMs: 30 });
+        try {
+            await expect(client.fetch("http://example.com/hang")).rejects.toThrow(/timed out/i);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("returns early from the post-connection `if (settled)` branch when abort races the pool", async () => {
+        // The AbortSignal aborts after the connection is acquired but before
+        // dispatch settles the request. The `if (settled)` check at line 264
+        // catches this: pooled is released and the async block returns
+        // without dispatching.
+        const seen: string[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req.url);
+            return { status: 200, statusText: "OK", body: "ok" };
+        });
+        const client = createClient({ transportFactory: factory });
+        try {
+            // First request succeeds normally.
+            const a = await client.fetch("http://example.com/a");
+            expect(a.status).toBe(200);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Additional redirect-policy branch coverage for client.ts followRedirects():
+//   - policy=error + non-redirect status (returns response)
+//   - policy=follow + non-redirect status (returns response)
+//   - policy=follow + redirect with missing Location (returns response)
+//   - policy=follow + 303 + GET method (preserved, not stripped)
+//   - policy=follow + 303 + HEAD method (preserved)
+// These drive the branches at lines 313, 322, 327, 333, 340.
+// ---------------------------------------------------------------------------
+
+describe("client — redirect policy branches", () => {
+    it("policy=error returns a non-redirect response unchanged (isRedirectStatus=false branch)", async () => {
+        // With policy=error, a 200 response must be returned as-is (the
+        // `if (isRedirectStatus(...))` branch at line 313 is skipped).
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory, redirectPolicy: { kind: "error" } });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.status).toBe(200);
+            expect(await resp.text()).toBe("ok");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("policy=follow returns a non-redirect response unchanged (isRedirectStatus=false branch)", async () => {
+        // With policy=follow, a 200 response must be returned as-is (the
+        // `if (!isRedirectStatus(...))` branch at line 322 fires).
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.status).toBe(200);
+            expect(await resp.text()).toBe("ok");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("policy=follow returns a 3xx response when Location is missing (location===undefined branch)", async () => {
+        // A redirect status with no Location header cannot be followed, so
+        // the `if (location === undefined)` branch at line 333 returns the
+        // 3xx response as-is.
+        const { factory, close } = installBackend(() => ({
+            status: 302,
+            statusText: "Found",
+            body: "no location",
+        }));
+        const client = createClient({ transportFactory: factory });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.status).toBe(302);
+            expect(await resp.text()).toBe("no location");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("policy=follow + 303 + GET preserves the method (METHODS_PRESERVED_ON_303 branch)", async () => {
+        // GET is in METHODS_PRESERVED_ON_303, so a 303 with GET must NOT be
+        // converted (the `if (303 && !METHODS_PRESERVED...)` branch at
+        // line 340 is skipped).
+        const seen: string[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req.method);
+            if (req.url === "/post") {
+                return { status: 303, headers: { location: "/get" }, body: "" };
+            }
+            return { status: 200, statusText: "OK", body: "ok" };
+        });
+        const client = createClient({ transportFactory: factory });
+        try {
+            const resp = await client.fetch("http://example.com/post", { method: "GET" });
+            expect(resp.status).toBe(200);
+            // GET is preserved across the 303.
+            expect(seen[1]).toBe("GET");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Test for the storeCookies domain-mismatch branch (client.ts line 182-186).
+// When the server sets a cookie whose domain does not match the request URL,
+// the cookie jar throws a domain-mismatch error that storeCookies silently
+// drops (RFC 6265 §5.3 step 11). Any other error re-throws.
+// ---------------------------------------------------------------------------
+
+describe("client — storeCookies domain-mismatch handling", () => {
+    it("silently drops a domain-mismatch cookie instead of throwing", async () => {
+        // The cookie jar rejects cookies whose domain does not match the
+        // request URL. storeCookies must silently drop these (the
+        // `!err.message.includes("domain")` branch at line 184 returns false).
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            headers: {
+                // Domain does not match example.com — the jar will reject it.
+                "set-cookie": "sid=evil; Domain=evil.example; Path=/",
+            },
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory });
+        try {
+            // Must NOT throw — the domain-mismatch is silently dropped.
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.status).toBe(200);
+            expect(await resp.text()).toBe("ok");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});

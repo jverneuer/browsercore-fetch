@@ -185,3 +185,35 @@ describe("adaptTlsToTransport", () => {
         expect(transport.state.state).toBe("open");
     });
 });
+
+// ---------------------------------------------------------------------------
+// Exhaustiveness-check tests for the two `assertNever` default branches in
+// tlsToTransportState (line 82) and tlsCloseReasonToTransport (line 98).
+// These branches are unreachable in normal operation — they fire only if a
+// new TlsState or TlsCloseReasonType variant is added without a matching
+// case. We force them by feeding a forged state/reason through the same
+// code path the adapter uses, so the default branch is covered.
+// ---------------------------------------------------------------------------
+
+describe("tlsToTransportState — exhaustiveness default branch", () => {
+    it("throws via assertNever for an unhandled TlsState variant", () => {
+        // The adapter reads `this.tls.state` through tlsToTransportState.
+        // We set a forged state whose `state` discriminant is not one of
+        // connecting/handshaking/open/closed, forcing the default branch.
+        const tls = new FakeTls();
+        tls.setState({ state: "surprise" } as never);
+        const adapter = new TlsTransportAdapter(tls);
+        expect(() => adapter.state).toThrowError(/Unexpected value/);
+    });
+});
+
+describe("tlsCloseReasonToTransport — exhaustiveness default branch", () => {
+    it("throws via assertNever for an unhandled TlsCloseReasonType variant", () => {
+        // A closed state with a forged reason.kind forces the default branch
+        // of tlsCloseReasonToTransport.
+        const tls = new FakeTls();
+        tls.setState({ state: "closed", reason: { kind: "surprise" } } as never);
+        const adapter = new TlsTransportAdapter(tls);
+        expect(() => adapter.state).toThrowError(/Unexpected value/);
+    });
+});
