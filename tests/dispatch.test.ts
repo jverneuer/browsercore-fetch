@@ -257,6 +257,44 @@ describe("dispatchHttp1 — response building", () => {
         expect(await resp.text()).toBe("body");
     });
 
+    it("does not double-decompress when http1 returns a decompressed body with content-encoding set", async () => {
+        // http1's decodeBody decompresses in-place and leaves the content-encoding
+        // header on the response. dispatchHttp1 must NOT decompress again — it
+        // passes `undefined` encoding to buildResponse. Simulate this by returning
+        // a plaintext body with content-encoding: gzip still set (what http1
+        // produces post-decode). If fetch decompressed again, the bytes would be
+        // corrupt and text() would throw or return garbage.
+        const { gzipSync } = require("node:zlib") as typeof import("node:zlib");
+        const original = new TextEncoder().encode("already-decompressed-by-http1");
+        // http1 decompresses, so the body arriving at dispatchHttp1 is plaintext.
+        const conn = fakeHttp1(() => ({
+            statusCode: 200,
+            statusText: "OK",
+            headers: new Map([["content-encoding", "gzip"]]),
+            body: original,
+        }));
+        const resp = await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        expect(resp.headers["content-encoding"]).toBe("gzip");
+        expect(await resp.text()).toBe("already-decompressed-by-http1");
+        // A naive double-decompress would feed these plaintext bytes to gunzip,
+        // throwing Z_DATA_ERROR ("incorrect header check").
+    });
+
+    it("http2 still decompresses when content-encoding is set (contrast with http1)", async () => {
+        // HTTP/2 does not touch content-encoding, so the body arrives still
+        // compressed and dispatchHttp2 must decompress it. This is the counterpart
+        // to the http1 test above — the two dispatch paths are asymmetric.
+        const { gzipSync } = require("node:zlib") as typeof import("node:zlib");
+        const original = new TextEncoder().encode("h2-still-compressed");
+        const conn = fakeHttp2(() => ({
+            statusCode: 200,
+            headers: new Map([["content-encoding", "gzip"]]),
+            body: gzipSync(original),
+        }));
+        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        expect(await resp.text()).toBe("h2-still-compressed");
+    });
+
     it("passes an empty body kind for GET/HEAD (no body)", async () => {
         const conn = fakeHttp1(() => okResponse());
         await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
