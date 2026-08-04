@@ -1,37 +1,8 @@
 {
+  "extends": "@browsercore/dev/tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2024",
-    "lib": [
-      "ES2024"
-    ],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "moduleDetection": "force",
-    "rootDir": "./src",
-    "outDir": "./dist",
-    "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noImplicitOverride": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "useUnknownInCatchVariables": true,
-    "allowUnreachableCode": false,
-    "allowUnusedLabels": false,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "types": [
-      "node"
-    ]
+    "rootDir": "src",
+    "outDir": "dist"
   },
   "include": [
     "src/**/*.ts"

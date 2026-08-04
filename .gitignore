@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
-coverage/
+*.log
 .DS_Store
-package-lock.json
+coverage/
+.vitest/
