@@ -10,6 +10,7 @@
 import type { CookieUrl } from "@browsercore/cookies";
 import { FetchError } from "./errors.js";
 import type { ParsedUrl } from "./types.js";
+import { assertNever } from "./utils.js";
 
 /** Branded pool key — host:port is the origin identity for connection reuse. */
 export type PoolKey = string & { __brand: "PoolKey" };
@@ -26,6 +27,8 @@ export function defaultPort(scheme: "http" | "https"): number {
             return 80;
         case "https":
             return 443;
+        default:
+            return assertNever(scheme);
     }
 }
 
@@ -44,9 +47,9 @@ export function parseUrl(input: string): ParsedUrl {
         parsed = new URL(input);
     } catch (err) {
         const cause = err instanceof Error ? err : undefined;
-        throw cause !== undefined
-            ? new FetchError(`invalid URL: ${input}`, { url: input, cause })
-            : new FetchError(`invalid URL: ${input}`, { url: input });
+        throw cause === undefined
+            ? new FetchError(`invalid URL: ${input}`, { url: input })
+            : new FetchError(`invalid URL: ${input}`, { url: input, cause });
     }
     const scheme = parsed.protocol.replace(":", "");
     if (scheme !== "http" && scheme !== "https") {

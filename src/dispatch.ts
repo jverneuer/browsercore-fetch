@@ -7,6 +7,9 @@
  * branch that lifts a TLS-terminated transport into a pooled protocol connection.
  */
 
+// Connection-establishment + request dispatch composes every protocol layer.
+/* eslint-disable import/max-dependencies */
+
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
 import { connectTls } from "@browsercore/tls";
 import {
@@ -91,14 +94,14 @@ export async function dispatchHttp1(
         body: bodyKind(body),
     });
     // HTTP/1.1 decompresses the body in its `_decodeBody` based on the
-    // `content-encoding` header — pass `undefined` so we don't decompress twice.
+    // `content-encoding` header — `encoding` is omitted so we don't decompress
+    // twice.
     return buildResponse(
         originString(url) + requestTarget(url),
         response.statusCode,
         response.statusText,
         response.headers,
         response.body,
-        undefined,
     );
 }
 
