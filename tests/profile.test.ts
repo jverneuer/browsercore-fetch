@@ -106,7 +106,7 @@ describe("profileToTlsConfig", () => {
 
     it("rejects an invalid signature algorithm with FetchError", () => {
         const profile = makeProfile();
-        profile.tls.signatureAlgorithms = ["rsa_pss_rsae_sha512"];
+        profile.tls.signatureAlgorithms = ["rsa_pss_rsae_sha999"];
         expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
         try {
             profileToTlsConfig(profile, "h");

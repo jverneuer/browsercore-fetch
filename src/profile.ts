@@ -23,50 +23,113 @@ import { FetchError } from "./errors.js";
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */
 export const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
 
-/** Set of valid TLS 1.3 cipher suite names (exhaustive over the CipherSuite union). */
-const CIPHER_SUITES: ReadonlySet<CipherSuite> = new Set([
+/**
+ * Set of valid TLS cipher suite names. Includes the GREASE sentinel (RFC 8701),
+ * the TLS 1.3 AEAD suites, the TLS 1.2 suites that real browsers advertise in
+ * their offered ClientHello list for middlebox compatibility, and the legacy
+ * 3DES suites some profiles still ship. Typed as `ReadonlySet<string>` because
+ * the profiles package advertises suites (e.g. 3DES) that are not yet in the
+ * strict CipherSuite union in @browsercore/tls.
+ */
+const CIPHER_SUITES: ReadonlySet<string> = new Set([
+    "TLS_GREASE_RESERVED_0",
     "TLS_AES_128_GCM_SHA256",
     "TLS_AES_256_GCM_SHA384",
     "TLS_CHACHA20_POLY1305_SHA256",
     "TLS_AES_128_CCM_SHA256",
+    "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+    "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+    "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+    "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+    "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+    "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+    "TLS_RSA_WITH_AES_128_GCM_SHA256",
+    "TLS_RSA_WITH_AES_256_GCM_SHA384",
+    "TLS_RSA_WITH_AES_128_CBC_SHA",
+    "TLS_RSA_WITH_AES_256_CBC_SHA",
+    "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
+    "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
+    "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
 ]);
 
-/** Set of valid named groups for key share (exhaustive over NamedGroup). */
-const NAMED_GROUPS: ReadonlySet<NamedGroup> = new Set([
+/**
+ * Set of valid named groups for key share (exhaustive over NamedGroup in
+ * @browsercore/tls, plus the post-quantum and FFDHE groups that newer browser
+ * profiles advertise). The profiles package types keyShareGroups as string[],
+ * so this set must accept every group a shipped profile emits — including ones
+ * not yet in the strict NamedGroup union.
+ */
+const NAMED_GROUPS: ReadonlySet<string> = new Set([
     "secp256r1",
     "secp384r1",
+    "secp521r1",
     "x25519",
     "x448",
+    "X25519MLKEM768",
+    "X25519Kyber768",
+    "ffdhe2048",
+    "ffdhe3072",
 ]);
 
-/** Set of valid signature algorithms (exhaustive over SignatureScheme). */
-const SIGNATURE_ALGORITHMS: ReadonlySet<SignatureScheme> = new Set([
+/**
+ * Set of valid signature algorithms (exhaustive over SignatureScheme in
+ * @browsercore/tls, plus the legacy SHA-1 and P-521 schemes some profiles
+ * still advertise). The profiles package types signatureAlgorithms as
+ * string[], so this set must accept every scheme a shipped profile emits.
+ */
+const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set([
     "ecdsa_secp256r1_sha256",
     "ecdsa_secp384r1_sha384",
+    "ecdsa_secp521r1_sha512",
+    "ecdsa_sha1",
+    "ed25519",
     "rsa_pss_rsae_sha256",
     "rsa_pss_rsae_sha384",
+    "rsa_pss_rsae_sha512",
     "rsa_pkcs1_sha256",
+    "rsa_pkcs1_sha384",
+    "rsa_pkcs1_sha512",
+    "rsa_pkcs1_sha1",
 ]);
 
-/** Validate and narrow a string to a {@link CipherSuite}, or throw {@link FetchError}. */
+/**
+ * Validate a string against the known cipher suites, or throw
+ * {@link FetchError}. The set includes every suite a shipped profile emits
+ * (including GREASE, TLS 1.2, and legacy 3DES); the cast narrows to CipherSuite
+ * for the TLS layer.
+ */
 function asCipherSuite(value: string): CipherSuite {
-    if (!CIPHER_SUITES.has(value as CipherSuite)) {
+    if (!CIPHER_SUITES.has(value)) {
         throw new FetchError(`invalid cipher suite in profile: ${value}`, { details: { value } });
     }
     return value as CipherSuite;
 }
 
-/** Validate and narrow a string to a {@link NamedGroup}, or throw {@link FetchError}. */
+/**
+ * Validate a string against the known key-share groups, or throw
+ * {@link FetchError}. The set includes every group a shipped profile emits
+ * (including post-quantum and FFDHE groups not yet in the strict NamedGroup
+ * union); the cast narrows to NamedGroup for the TLS layer.
+ */
 function asNamedGroup(value: string): NamedGroup {
-    if (!NAMED_GROUPS.has(value as NamedGroup)) {
+    if (!NAMED_GROUPS.has(value)) {
         throw new FetchError(`invalid key-share group in profile: ${value}`, { details: { value } });
     }
     return value as NamedGroup;
 }
 
-/** Validate and narrow a string to a {@link SignatureScheme}, or throw {@link FetchError}. */
+/**
+ * Validate a string against the known signature algorithms, or throw
+ * {@link FetchError}. The set includes every scheme a shipped profile emits
+ * (including legacy SHA-1 and P-521 schemes not yet in the strict
+ * SignatureScheme union); the cast narrows to SignatureScheme for the TLS layer.
+ */
 function asSignatureScheme(value: string): SignatureScheme {
-    if (!SIGNATURE_ALGORITHMS.has(value as SignatureScheme)) {
+    if (!SIGNATURE_ALGORITHMS.has(value)) {
         throw new FetchError(`invalid signature algorithm in profile: ${value}`, { details: { value } });
     }
     return value as SignatureScheme;
