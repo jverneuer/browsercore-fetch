@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Http2Settings } from "@browsercore/http2";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
+import {
+    ChromeProfiles,
+    FirefoxProfiles,
+    SafariProfiles,
+} from "@browsercore/profiles";
 import {
     ALPN_PROTOCOLS,
     applyHttp1Profile,
@@ -106,7 +111,7 @@ describe("profileToTlsConfig", () => {
 
     it("rejects an invalid signature algorithm with FetchError", () => {
         const profile = makeProfile();
-        profile.tls.signatureAlgorithms = ["rsa_pss_rsae_sha512"];
+        profile.tls.signatureAlgorithms = ["rsa_pss_rsae_sha999"];
         expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
         try {
             profileToTlsConfig(profile, "h");
@@ -185,6 +190,153 @@ describe("applyHttp1Profile", () => {
         applyHttp1Profile(headers, profile);
         expect(headers.get("x")).toBe("y");
         expect(headers.size).toBe(1);
+    });
+});
+
+/**
+ * Every cipher suite / named group / signature algorithm advertised by the
+ * shipped chrome-140, firefox-128, and safari profiles must pass the
+ * validation in `profileToTlsConfig` — the profiles package is the single
+ * source of truth for the allow-list, so a profile that emits a value not in
+ * `codes.ts` is a bug in the profile, not an allowable rejection.
+ */
+describe("shipped profiles pass fetch validation", () => {
+    const chrome = ChromeProfiles.chrome140;
+    const firefox = FirefoxProfiles.firefox128;
+    const safari = SafariProfiles.safari17;
+
+    it("chrome-140 TLS fingerprint translates without error", () => {
+        expect(() => profileToTlsConfig(chrome, "example.com")).not.toThrow();
+        const cfg = profileToTlsConfig(chrome, "example.com");
+        expect(cfg.cipherSuites).toEqual(chrome.tls.cipherSuites);
+        expect(cfg.keyShareGroups).toEqual(chrome.tls.keyShareGroups);
+        expect(cfg.signatureAlgorithms).toEqual(chrome.tls.signatureAlgorithms);
+    });
+
+    it("firefox-128 TLS fingerprint translates without error", () => {
+        expect(() => profileToTlsConfig(firefox, "example.com")).not.toThrow();
+        const cfg = profileToTlsConfig(firefox, "example.com");
+        expect(cfg.cipherSuites).toEqual(firefox.tls.cipherSuites);
+        expect(cfg.keyShareGroups).toEqual(firefox.tls.keyShareGroups);
+        expect(cfg.signatureAlgorithms).toEqual(firefox.tls.signatureAlgorithms);
+    });
+
+    it("safari-17 TLS fingerprint translates without error", () => {
+        expect(() => profileToTlsConfig(safari, "example.com")).not.toThrow();
+        const cfg = profileToTlsConfig(safari, "example.com");
+        expect(cfg.cipherSuites).toEqual(safari.tls.cipherSuites);
+        expect(cfg.keyShareGroups).toEqual(safari.tls.keyShareGroups);
+        expect(cfg.signatureAlgorithms).toEqual(safari.tls.signatureAlgorithms);
+    });
+
+    it("every suite across the three profiles is in the allow-list", () => {
+        const allSuites = new Set([
+            ...chrome.tls.cipherSuites,
+            ...firefox.tls.cipherSuites,
+            ...safari.tls.cipherSuites,
+        ]);
+        for (const suite of allSuites) {
+            const profile = makeProfile();
+            profile.tls.cipherSuites = [suite];
+            expect(() => profileToTlsConfig(profile, "h")).not.toThrow();
+        }
+    });
+
+    it("every named group across the three profiles is in the allow-list", () => {
+        const allGroups = new Set([
+            ...chrome.tls.keyShareGroups,
+            ...firefox.tls.keyShareGroups,
+            ...safari.tls.keyShareGroups,
+        ]);
+        for (const group of allGroups) {
+            const profile = makeProfile();
+            profile.tls.keyShareGroups = [group];
+            expect(() => profileToTlsConfig(profile, "h")).not.toThrow();
+        }
+    });
+
+    it("every signature scheme across the three profiles is in the allow-list", () => {
+        const allSchemes = new Set([
+            ...chrome.tls.signatureAlgorithms,
+            ...firefox.tls.signatureAlgorithms,
+            ...safari.tls.signatureAlgorithms,
+        ]);
+        for (const scheme of allSchemes) {
+            const profile = makeProfile();
+            profile.tls.signatureAlgorithms = [scheme];
+            expect(() => profileToTlsConfig(profile, "h")).not.toThrow();
+        }
+    });
+});
+
+/**
+ * Sentinel test: a new key added to `profiles/codes.ts` must immediately pass
+ * validation in `@browsercore/fetch` with no edit to fetch itself. We simulate
+ * that by mocking the codes module to include an extra suite / group / scheme,
+ * then asserting the validator accepts it.
+ */
+describe("sentinel: new codes.ts keys pass validation without a fetch edit", () => {
+    it("a new cipher suite added to codes.ts passes fetch validation", async () => {
+        vi.resetModules();
+        vi.doMock("@browsercore/profiles", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+            return {
+                ...actual,
+                CIPHER_SUITE_CODES: {
+                    ...actual.CIPHER_SUITE_CODES,
+                    TLS_FUTURE_EXPERIMENTAL_SUITE: 0xbeef,
+                },
+            };
+        });
+        const { profileToTlsConfig: freshProfileToTlsConfig } = await import(
+            "../src/profile.js"
+        );
+        const profile = makeProfile();
+        profile.tls.cipherSuites = ["TLS_FUTURE_EXPERIMENTAL_SUITE"];
+        expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
+        vi.doUnmock("@browsercore/profiles");
+    });
+
+    it("a new named group added to codes.ts passes fetch validation", async () => {
+        vi.resetModules();
+        vi.doMock("@browsercore/profiles", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+            return {
+                ...actual,
+                NAMED_GROUP_CODES: {
+                    ...actual.NAMED_GROUP_CODES,
+                    futurePostQuantumGroup: 0xdead,
+                },
+            };
+        });
+        const { profileToTlsConfig: freshProfileToTlsConfig } = await import(
+            "../src/profile.js"
+        );
+        const profile = makeProfile();
+        profile.tls.keyShareGroups = ["futurePostQuantumGroup"];
+        expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
+        vi.doUnmock("@browsercore/profiles");
+    });
+
+    it("a new signature scheme added to codes.ts passes fetch validation", async () => {
+        vi.resetModules();
+        vi.doMock("@browsercore/profiles", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+            return {
+                ...actual,
+                SIGNATURE_SCHEME_CODES: {
+                    ...actual.SIGNATURE_SCHEME_CODES,
+                    ed448_experimental: 0xcafe,
+                },
+            };
+        });
+        const { profileToTlsConfig: freshProfileToTlsConfig } = await import(
+            "../src/profile.js"
+        );
+        const profile = makeProfile();
+        profile.tls.signatureAlgorithms = ["ed448_experimental"];
+        expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
+        vi.doUnmock("@browsercore/profiles");
     });
 });
 
