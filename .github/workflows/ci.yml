@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build-and-publish:
-    uses: jverneuer/browsercore-dev/.github/workflows/reusable-ci.yml@ci-v2
+    uses: jverneuer/browsercore-dev/.github/workflows/reusable-ci.yml@ci-v4
     with:
       node-version: '26'
     permissions:
