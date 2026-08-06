@@ -1,6 +1,8 @@
 # @browsercore/fetch
 
+[![npm version](https://img.shields.io/npm/v/@browsercore/fetch.svg)](https://www.npmjs.com/package/@browsercore/fetch)
 [![coverage](https://img.shields.io/endpoint?url=https://jverneuer.github.io/browsercore-fetch/badge.json)](https://github.com/jverneuer/browsercore-fetch/blob/main/COVERAGE.md)
+[![license](https://img.shields.io/npm/l/@browsercore/fetch.svg)](LICENSE)
 
 A developer-facing high-level HTTP API. Composes every lower-level package
 (transport, tls, http1, http2, profiles, cookies) into a single `fetch()` surface
