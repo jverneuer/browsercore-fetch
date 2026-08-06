@@ -1,7 +1,7 @@
 # CI for @browsercore/fetch — typecheck, lint, test, coverage, build, publish.
 on:
   push:
-    branches: [main]
+    branches: [main, feat/platform-contracts]
   pull_request:
     branches: [main]
 
