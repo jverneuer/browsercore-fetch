@@ -18,83 +18,46 @@ import {
 } from "@browsercore/tls";
 import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
+import {
+    CIPHER_SUITE_CODES,
+    NAMED_GROUP_CODES,
+    SIGNATURE_SCHEME_CODES,
+} from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
 
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */
 export const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
 
 /**
- * Set of valid TLS cipher suite names. Includes the GREASE sentinel (RFC 8701),
- * the TLS 1.3 AEAD suites, the TLS 1.2 suites that real browsers advertise in
- * their offered ClientHello list for middlebox compatibility, and the legacy
- * 3DES suites some profiles still ship. Typed as `ReadonlySet<string>` because
+ * Set of valid TLS cipher suite names. Derived from the canonical
+ * `CIPHER_SUITE_CODES` table in `@browsercore/profiles` (single source of
+ * truth), plus the GREASE sentinel (RFC 8701) which the profiles package
+ * does not include in the codes table. Typed as `ReadonlySet<string>` because
  * the profiles package advertises suites (e.g. 3DES) that are not yet in the
  * strict CipherSuite union in @browsercore/tls.
  */
 const CIPHER_SUITES: ReadonlySet<string> = new Set([
+    ...Object.keys(CIPHER_SUITE_CODES),
     "TLS_GREASE_RESERVED_0",
-    "TLS_AES_128_GCM_SHA256",
-    "TLS_AES_256_GCM_SHA384",
-    "TLS_CHACHA20_POLY1305_SHA256",
-    "TLS_AES_128_CCM_SHA256",
-    "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-    "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
-    "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
-    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
-    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
-    "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
-    "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
-    "TLS_RSA_WITH_AES_128_GCM_SHA256",
-    "TLS_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_RSA_WITH_AES_128_CBC_SHA",
-    "TLS_RSA_WITH_AES_256_CBC_SHA",
-    "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
-    "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
-    "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
 ]);
 
 /**
- * Set of valid named groups for key share (exhaustive over NamedGroup in
- * @browsercore/tls, plus the post-quantum and FFDHE groups that newer browser
- * profiles advertise). The profiles package types keyShareGroups as string[],
- * so this set must accept every group a shipped profile emits — including ones
- * not yet in the strict NamedGroup union.
+ * Set of valid named groups for key share. Derived from the canonical
+ * `NAMED_GROUP_CODES` table in `@browsercore/profiles` — the single source
+ * of truth. The profiles package types keyShareGroups as string[], so this
+ * set must accept every group a shipped profile emits.
  */
-const NAMED_GROUPS: ReadonlySet<string> = new Set([
-    "secp256r1",
-    "secp384r1",
-    "secp521r1",
-    "x25519",
-    "x448",
-    "X25519MLKEM768",
-    "X25519Kyber768",
-    "ffdhe2048",
-    "ffdhe3072",
-]);
+const NAMED_GROUPS: ReadonlySet<string> = new Set(Object.keys(NAMED_GROUP_CODES));
 
 /**
- * Set of valid signature algorithms (exhaustive over SignatureScheme in
- * @browsercore/tls, plus the legacy SHA-1 and P-521 schemes some profiles
- * still advertise). The profiles package types signatureAlgorithms as
- * string[], so this set must accept every scheme a shipped profile emits.
+ * Set of valid signature algorithms. Derived from the canonical
+ * `SIGNATURE_SCHEME_CODES` table in `@browsercore/profiles` — the single
+ * source of truth. The profiles package types signatureAlgorithms as string[],
+ * so this set must accept every scheme a shipped profile emits.
  */
-const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set([
-    "ecdsa_secp256r1_sha256",
-    "ecdsa_secp384r1_sha384",
-    "ecdsa_secp521r1_sha512",
-    "ecdsa_sha1",
-    "ed25519",
-    "rsa_pss_rsae_sha256",
-    "rsa_pss_rsae_sha384",
-    "rsa_pss_rsae_sha512",
-    "rsa_pkcs1_sha256",
-    "rsa_pkcs1_sha384",
-    "rsa_pkcs1_sha512",
-    "rsa_pkcs1_sha1",
-]);
+const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set(
+    Object.keys(SIGNATURE_SCHEME_CODES),
+);
 
 /**
  * Validate a string against the known cipher suites, or throw
