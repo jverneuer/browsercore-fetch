@@ -161,6 +161,8 @@ export function profileToTlsConfig(profile: BrowserProfile, serverName: string) 
         keyShareGroups: profile.tls.keyShareGroups.map(asNamedGroup),
         signatureAlgorithms: profile.tls.signatureAlgorithms.map(asSignatureScheme),
         supportedVersions: profile.tls.supportedVersions.map(toProtocolVersion),
+        extensionOrder: profile.tls.extensionOrder,
+        grease: profile.tls.grease,
         serverName,
         alpnProtocols: ALPN_PROTOCOLS,
     };
