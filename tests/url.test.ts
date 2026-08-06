@@ -197,11 +197,11 @@ describe("resolveRedirectUrl", () => {
         expect(next.path).toBe("/x");
     });
 
-    it("coerces an unsupported scheme to https", () => {
-        // asScheme narrows anything non-http to https — a non-http Location is
-        // pinned to https so the request never leaves the supported scheme set.
-        const next = resolveRedirectUrl(base(), "ftp://example.com/x");
-        expect(next.scheme).toBe("https");
+    it("throws on an unsupported scheme (no silent coercion)", () => {
+        // asScheme rejects anything non-http/https — a non-http Location is
+        // never silently coerced to https, so a hostile redirect surfaces as
+        // a FetchError rather than a request the server never intended.
+        expect(() => resolveRedirectUrl(base(), "ftp://example.com/x")).toThrow(FetchError);
     });
 
     it("carries the query + fragment from the Location", () => {

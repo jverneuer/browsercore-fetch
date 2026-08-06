@@ -24,9 +24,16 @@ export function defaultPort(scheme: "http" | "https"): number {
     return scheme === "http" ? 80 : 443;
 }
 
-/** Narrow a parsed-protocol string to the supported http/https scheme set. */
+/**
+ * Narrow a parsed-protocol string to the supported http/https scheme set.
+ * Throws {@link FetchError} for anything else — external data (e.g. a Location
+ * header) is validated immediately and never silently coerced.
+ */
 function asScheme(s: string): "http" | "https" {
-    return s === "http" || s === "https" ? s : "https";
+    if (s !== "http" && s !== "https") {
+        throw new FetchError(`unsupported scheme: ${s}`, { url: s });
+    }
+    return s;
 }
 
 /** Parse a URL string into a {@link ParsedUrl}. Throws {@link FetchError} on malformed input. */
