@@ -9,10 +9,13 @@ permissions:
 
 jobs:
   build-and-publish:
-    uses: jverneuer/browsercore-dev/.github/workflows/reusable-ci.yml@main
-    with:
-      node-version: '26'
-    permissions:
-      contents: write
-      id-token: write
-      pages: write
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run lint -- --deny-warnings
+      - run: npm test -- --coverage
