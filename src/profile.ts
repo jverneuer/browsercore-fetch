@@ -33,8 +33,9 @@ export const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
  * `CIPHER_SUITE_CODES` table in `@browsercore/profiles` (single source of
  * truth), plus the GREASE sentinel (RFC 8701) which the profiles package
  * does not include in the codes table. Typed as `ReadonlySet<string>` because
- * the profiles package advertises suites (e.g. 3DES) that are not yet in the
- * strict CipherSuite union in @browsercore/tls.
+ * the profiles package types the codes table keys as `string` (no dependency
+ * on `@browsercore/tls` by design); the cast in {@link asCipherSuite} narrows
+ * to the `CipherSuite` union, which now includes every value this set holds.
  */
 const CIPHER_SUITES: ReadonlySet<string> = new Set([
     ...Object.keys(CIPHER_SUITE_CODES),
@@ -62,8 +63,8 @@ const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set(
 /**
  * Validate a string against the known cipher suites, or throw
  * {@link FetchError}. The set includes every suite a shipped profile emits
- * (including GREASE, TLS 1.2, and legacy 3DES); the cast narrows to CipherSuite
- * for the TLS layer.
+ * (including GREASE, TLS 1.2, and legacy 3DES); the cast narrows to the
+ * `CipherSuite` union for the TLS layer.
  */
 function asCipherSuite(value: string): CipherSuite {
     if (!CIPHER_SUITES.has(value)) {
@@ -75,8 +76,8 @@ function asCipherSuite(value: string): CipherSuite {
 /**
  * Validate a string against the known key-share groups, or throw
  * {@link FetchError}. The set includes every group a shipped profile emits
- * (including post-quantum and FFDHE groups not yet in the strict NamedGroup
- * union); the cast narrows to NamedGroup for the TLS layer.
+ * (including post-quantum and FFDHE groups); the cast narrows to the
+ * `NamedGroup` union for the TLS layer.
  */
 function asNamedGroup(value: string): NamedGroup {
     if (!NAMED_GROUPS.has(value)) {
@@ -88,8 +89,8 @@ function asNamedGroup(value: string): NamedGroup {
 /**
  * Validate a string against the known signature algorithms, or throw
  * {@link FetchError}. The set includes every scheme a shipped profile emits
- * (including legacy SHA-1 and P-521 schemes not yet in the strict
- * SignatureScheme union); the cast narrows to SignatureScheme for the TLS layer.
+ * (including legacy SHA-1 and P-521 schemes); the cast narrows to the
+ * `SignatureScheme` union for the TLS layer.
  */
 function asSignatureScheme(value: string): SignatureScheme {
     if (!SIGNATURE_ALGORITHMS.has(value)) {
