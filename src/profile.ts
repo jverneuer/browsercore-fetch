@@ -17,11 +17,11 @@ import {
     type SignatureScheme,
 } from "@browsercore/tls";
 import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
-import type { BrowserProfile } from "@browsercore/profiles";
 import {
     CIPHER_SUITE_CODES,
     NAMED_GROUP_CODES,
     SIGNATURE_SCHEME_CODES,
+    type BrowserProfile,
 } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
 
