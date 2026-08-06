@@ -12,6 +12,7 @@
 
 import { crypto } from "@browsercore/crypto";
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
+import type { Net, DnsResolver } from "@browsercore/contracts";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
@@ -189,6 +190,6 @@ export async function establishHttp1OverTransport(transport: Transport): Promise
 }
 
 /** Open a raw TCP transport to the parsed URL's host/port. */
-export function openTcpTransport(url: ParsedUrl): Promise<Transport> {
-    return connectTransport({ host: url.host, port: url.port });
+export function openTcpTransport(url: ParsedUrl, net: Net, dns: DnsResolver): Promise<Transport> {
+    return connectTransport({ host: url.host, port: url.port, net, dns });
 }
