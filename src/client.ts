@@ -19,6 +19,7 @@
 /* eslint-disable import/max-dependencies */
 
 import type { Transport } from "@browsercore/transport";
+import type { Net, DnsResolver } from "@browsercore/contracts";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
@@ -56,6 +57,17 @@ export interface FetchClientOptions {
      * Default 30_000.
      */
     readonly idleTimeoutMs?: number;
+    /**
+     * Platform-provided TCP implementation. Injected by the application
+     * entrypoint (e.g. browsersmith passes the Node adapter). Required for
+     * production use — without it, the client cannot open real TCP connections.
+     */
+    readonly net?: Net;
+    /**
+     * Platform-provided DNS resolver. Injected by the application entrypoint
+     * (e.g. browsersmith passes the Node adapter). Required for production use.
+     */
+    readonly dns?: DnsResolver;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -205,6 +217,12 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     const poolOptions: PoolOptions = {};
     if (options?.idleTimeoutMs !== undefined) {
         poolOptions.idleTimeoutMs = options.idleTimeoutMs;
+    }
+    if (options?.net !== undefined) {
+        poolOptions.net = options.net;
+    }
+    if (options?.dns !== undefined) {
+        poolOptions.dns = options.dns;
     }
     if (options?.transportFactory !== undefined) {
         poolOptions.transportFactory = options.transportFactory;
