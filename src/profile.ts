@@ -11,18 +11,16 @@
 import {
     TLS_1_2,
     TLS_1_3,
+    CIPHER_SUITE_CODES,
+    NAMED_GROUP_CODES,
+    SIGNATURE_SCHEME_CODES,
     type CipherSuite,
     type NamedGroup,
     type ProtocolVersion,
     type SignatureScheme,
 } from "@browsercore/tls";
 import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
-import {
-    CIPHER_SUITE_CODES,
-    NAMED_GROUP_CODES,
-    SIGNATURE_SCHEME_CODES,
-    type BrowserProfile,
-} from "@browsercore/profiles";
+import type { BrowserProfile } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
 
 /** ALPN protocols offered during the TLS handshake (h2 preferred). */

@@ -278,16 +278,16 @@ describe("shipped profiles pass fetch validation", () => {
 });
 
 /**
- * Sentinel test: a new key added to `profiles/codes.ts` must immediately pass
- * validation in `@browsercore/fetch` with no edit to fetch itself. We simulate
- * that by mocking the codes module to include an extra suite / group / scheme,
- * then asserting the validator accepts it.
+ * Sentinel test: a new key added to the IANA tables in `@browsercore/tls` must
+ * immediately pass validation in `@browsercore/fetch` with no edit to fetch
+ * itself. We simulate that by mocking the tls module to include an extra suite
+ * / group / scheme, then asserting the validator accepts it.
  */
-describe("sentinel: new codes.ts keys pass validation without a fetch edit", () => {
-    it("a new cipher suite added to codes.ts passes fetch validation", async () => {
+describe("sentinel: new IANA table keys pass validation without a fetch edit", () => {
+    it("a new cipher suite added to tls IANA tables passes fetch validation", async () => {
         vi.resetModules();
-        vi.doMock("@browsercore/profiles", async (importOriginal) => {
-            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+        vi.doMock("@browsercore/tls", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/tls")>();
             return {
                 ...actual,
                 CIPHER_SUITE_CODES: {
@@ -302,13 +302,13 @@ describe("sentinel: new codes.ts keys pass validation without a fetch edit", () 
         const profile = makeProfile();
         profile.tls.cipherSuites = ["TLS_FUTURE_EXPERIMENTAL_SUITE"];
         expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
-        vi.doUnmock("@browsercore/profiles");
+        vi.doUnmock("@browsercore/tls");
     });
 
-    it("a new named group added to codes.ts passes fetch validation", async () => {
+    it("a new named group added to tls IANA tables passes fetch validation", async () => {
         vi.resetModules();
-        vi.doMock("@browsercore/profiles", async (importOriginal) => {
-            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+        vi.doMock("@browsercore/tls", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/tls")>();
             return {
                 ...actual,
                 NAMED_GROUP_CODES: {
@@ -323,13 +323,13 @@ describe("sentinel: new codes.ts keys pass validation without a fetch edit", () 
         const profile = makeProfile();
         profile.tls.keyShareGroups = ["futurePostQuantumGroup"];
         expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
-        vi.doUnmock("@browsercore/profiles");
+        vi.doUnmock("@browsercore/tls");
     });
 
-    it("a new signature scheme added to codes.ts passes fetch validation", async () => {
+    it("a new signature scheme added to tls IANA tables passes fetch validation", async () => {
         vi.resetModules();
-        vi.doMock("@browsercore/profiles", async (importOriginal) => {
-            const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+        vi.doMock("@browsercore/tls", async (importOriginal) => {
+            const actual = await importOriginal<typeof import("@browsercore/tls")>();
             return {
                 ...actual,
                 SIGNATURE_SCHEME_CODES: {
@@ -344,7 +344,7 @@ describe("sentinel: new codes.ts keys pass validation without a fetch edit", () 
         const profile = makeProfile();
         profile.tls.signatureAlgorithms = ["ed448_experimental"];
         expect(() => freshProfileToTlsConfig(profile, "h")).not.toThrow();
-        vi.doUnmock("@browsercore/profiles");
+        vi.doUnmock("@browsercore/tls");
     });
 });
 
