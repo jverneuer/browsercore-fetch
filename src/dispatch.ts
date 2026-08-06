@@ -10,6 +10,7 @@
 // Connection-establishment + request dispatch composes every protocol layer.
 /* eslint-disable import/max-dependencies */
 
+import { crypto } from "@browsercore/crypto";
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
 import { connectTls } from "@browsercore/tls";
 import {
@@ -161,6 +162,7 @@ export async function establishConnection(
         serverName,
         profile: tlsConfig,
         alpnProtocols: ALPN_PROTOCOLS,
+        crypto,
     });
     const alpn = tls.alpnProtocol;
     // Adapt the TLS connection to the Transport interface for the HTTP layer.
@@ -170,7 +172,7 @@ export async function establishConnection(
         // HTTP/2 settings so the peer observes our advertised limits
         // (window size, max frame size, header table size, …) from the start.
         const initialSettings = profileHttp2Settings(profile);
-        const conn = await connectHttp2({ transport: httpTransport, initialSettings });
+        const conn = await connectHttp2({ transport: httpTransport, initialSettings, crypto });
         // Settings are seeded into the connection preface via initialSettings
         // above; they cannot be mutated post-connect (see profile.ts).
         return { protocol: "http2", id: conn.id, conn };
