@@ -125,7 +125,7 @@ function toProtocolVersion(s: string): ProtocolVersion {
  * mismatch that must surface as a {@link FetchError}, not a silent filter.
  */
 function validateSupportedVersions(versions: readonly string[]): readonly ProtocolVersion[] {
-    const mapped = versions.map(toProtocolVersion);
+    const mapped = versions.map((v) => toProtocolVersion(v));
     const unsupported = mapped.filter((v) => v !== TLS_1_3);
     if (unsupported.length > 0) {
         throw new FetchError(
