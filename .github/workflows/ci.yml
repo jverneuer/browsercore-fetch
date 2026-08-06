@@ -1,4 +1,4 @@
-name: CI
+name: build-and-publish
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  build-and-publish:
     runs-on: self-hosted
     timeout-minutes: 15
 
