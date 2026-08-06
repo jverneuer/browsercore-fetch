@@ -19,7 +19,7 @@
 /* eslint-disable import/max-dependencies */
 
 import type { Transport } from "@browsercore/transport";
-import { createCookieJar, type CookieJar } from "@browsercore/cookies";
+import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
@@ -180,10 +180,12 @@ function storeCookies(jar: CookieJar, headers: ReadonlyMap<string, string>, url:
             jar.setCookie(raw, cookieUrl(url));
         } catch (err) {
             // Domain-mismatch cookies are silently dropped (RFC 6265 §5.3
-            // step 11); anything else re-throws.
-            if (err instanceof Error && !err.message.includes("domain")) {
-                throw err;
+            // step 11); anything else re-throws. The cookie jar throws a typed
+            // CookieDomainError — match on that instead of parsing the message.
+            if (err instanceof CookieDomainError) {
+                continue;
             }
+            throw err;
         }
     }
 }
