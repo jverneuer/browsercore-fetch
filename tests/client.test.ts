@@ -715,7 +715,7 @@ describe("client — storeCookies domain-mismatch handling", () => {
     it("silently drops a domain-mismatch cookie instead of throwing", async () => {
         // The cookie jar rejects cookies whose domain does not match the
         // request URL. storeCookies must silently drop these (the
-        // `!err.message.includes("domain")` branch at line 184 returns false).
+        // `CookieDomainError` branch returns without re-throwing).
         const { factory, close } = installBackend(() => ({
             status: 200,
             statusText: "OK",
@@ -731,6 +731,29 @@ describe("client — storeCookies domain-mismatch handling", () => {
             const resp = await client.fetch("http://example.com/");
             expect(resp.status).toBe(200);
             expect(await resp.text()).toBe("ok");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("re-throws a non-domain cookie error (e.g. malformed Set-Cookie)", async () => {
+        // A Set-Cookie header with no `name=value` pair throws CookieParseError
+        // during parsing — which is NOT a CookieDomainError. storeCookies must
+        // re-throw it instead of silently dropping it.
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            headers: {
+                // No `=` in the first segment — parseSetCookieHeader throws
+                // "malformed name=value" before any domain check runs.
+                "set-cookie": "not a cookie",
+            },
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory });
+        try {
+            await expect(client.fetch("http://example.com/")).rejects.toThrow(/malformed name=value/);
         } finally {
             await client.close();
             await close();

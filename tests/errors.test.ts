@@ -64,7 +64,7 @@ describe("AbortError", () => {
     it("is a FetchError tagged with reason=aborted", () => {
         const err = new AbortError("request aborted", { url: "https://z" });
         expect(err).toBeInstanceOf(FetchError);
-        expect(err.kind).toBe("FetchError");
+        expect(err.kind).toBe("AbortError");
         expect(err.name).toBe("AbortError");
         expect(err.url).toBe("https://z");
         expect(err.details.reason).toBe("aborted");
