@@ -51,12 +51,13 @@
     },
     "dependencies": {
         "@browsercore/compression": "0.2.0",
+        "@browsercore/contracts": "^0.1.4",
         "@browsercore/cookies": "0.2.0",
         "@browsercore/crypto": "0.2.1",
         "@browsercore/http1": "0.2.0",
         "@browsercore/http2": "0.2.2",
         "@browsercore/profiles": "0.2.0",
         "@browsercore/tls": "0.4.0",
-        "@browsercore/transport": "0.2.3"
+        "@browsercore/transport": "^0.2.4"
     }
 }
