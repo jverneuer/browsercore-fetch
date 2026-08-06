@@ -18,10 +18,10 @@ import {
 } from "@browsercore/tls";
 import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
 import {
-    type BrowserProfile,
     CIPHER_SUITE_CODES,
     NAMED_GROUP_CODES,
     SIGNATURE_SCHEME_CODES,
+    type BrowserProfile,
 } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
 
@@ -30,27 +30,30 @@ export const ALPN_PROTOCOLS = ["h2", "http/1.1"] as const;
 
 /**
  * Set of valid TLS cipher suite names. Derived from the canonical
- * `CIPHER_SUITE_CODES` table in `@browsercore/profiles` — the single source of
- * truth for the IANA registry codes. Typed as `ReadonlySet<string>` because
+ * `CIPHER_SUITE_CODES` table in `@browsercore/profiles` (single source of
+ * truth), plus the GREASE sentinel (RFC 8701) which the profiles package
+ * does not include in the codes table. Typed as `ReadonlySet<string>` because
  * the profiles package advertises suites (e.g. 3DES) that are not yet in the
  * strict CipherSuite union in @browsercore/tls.
  */
-const CIPHER_SUITES: ReadonlySet<string> = new Set(Object.keys(CIPHER_SUITE_CODES));
+const CIPHER_SUITES: ReadonlySet<string> = new Set([
+    ...Object.keys(CIPHER_SUITE_CODES),
+    "TLS_GREASE_RESERVED_0",
+]);
 
 /**
  * Set of valid named groups for key share. Derived from the canonical
- * `NAMED_GROUP_CODES` table in `@browsercore/profiles`. The profiles package
- * types keyShareGroups as string[], so this set must accept every group a
- * shipped profile emits — including ones not yet in the strict NamedGroup
- * union.
+ * `NAMED_GROUP_CODES` table in `@browsercore/profiles` — the single source
+ * of truth. The profiles package types keyShareGroups as string[], so this
+ * set must accept every group a shipped profile emits.
  */
 const NAMED_GROUPS: ReadonlySet<string> = new Set(Object.keys(NAMED_GROUP_CODES));
 
 /**
  * Set of valid signature algorithms. Derived from the canonical
- * `SIGNATURE_SCHEME_CODES` table in `@browsercore/profiles`. The profiles
- * package types signatureAlgorithms as string[], so this set must accept every
- * scheme a shipped profile emits.
+ * `SIGNATURE_SCHEME_CODES` table in `@browsercore/profiles` — the single
+ * source of truth. The profiles package types signatureAlgorithms as string[],
+ * so this set must accept every scheme a shipped profile emits.
  */
 const SIGNATURE_ALGORITHMS: ReadonlySet<string> = new Set(
     Object.keys(SIGNATURE_SCHEME_CODES),
