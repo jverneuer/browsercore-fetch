@@ -77,13 +77,16 @@ describe("profileToTlsConfig", () => {
         expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304, 0x0303]);
     });
 
-    it("defaults an unrecognized version string to TLS 1.3 (forward-compat)", () => {
+    it("rejects an unrecognized version string with FetchError", () => {
         const profile = makeProfile();
         profile.tls.supportedVersions = ["TLS 9.9", "TLS 1.2"];
-        const cfg = profileToTlsConfig(profile, "h");
-        // Unknown version is treated as the most secure option (1.3).
-        expect(cfg.supportedVersions[0]!.name).toBe("TLS 1.3");
-        expect(cfg.supportedVersions[1]!.name).toBe("TLS 1.2");
+        expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
+        try {
+            profileToTlsConfig(profile, "h");
+        } catch (err) {
+            expect((err as FetchError).message).toContain("protocol version");
+            expect((err as FetchError).details.value).toBe("TLS 9.9");
+        }
     });
 
     it("rejects an invalid cipher suite with FetchError", () => {
@@ -221,12 +224,17 @@ describe("shipped profiles pass fetch validation", () => {
         expect(cfg.signatureAlgorithms).toEqual(firefox.tls.signatureAlgorithms);
     });
 
-    it("safari-17 TLS fingerprint translates without error", () => {
-        expect(() => profileToTlsConfig(safari, "example.com")).not.toThrow();
-        const cfg = profileToTlsConfig(safari, "example.com");
-        expect(cfg.cipherSuites).toEqual(safari.tls.cipherSuites);
-        expect(cfg.keyShareGroups).toEqual(safari.tls.keyShareGroups);
-        expect(cfg.signatureAlgorithms).toEqual(safari.tls.signatureAlgorithms);
+    it("safari-17 TLS fingerprint throws — profile advertises TLS 1.1/1.0 which the TLS layer does not support", () => {
+        // The safari profile advertises TLS 1.1 and TLS 1.0 in supportedVersions,
+        // but the TLS layer only supports 1.2 and 1.3. The previous silent
+        // coercion masked this data-integrity bug; the fix surfaces it as a
+        // FetchError. (The profile data itself is the bug — see profiles/profiles/safari.ts.)
+        expect(() => profileToTlsConfig(safari, "example.com")).toThrow(FetchError);
+        try {
+            profileToTlsConfig(safari, "example.com");
+        } catch (err) {
+            expect((err as FetchError).message).toContain("protocol version");
+        }
     });
 
     it("every suite across the three profiles is in the allow-list", () => {

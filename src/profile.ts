@@ -99,7 +99,11 @@ function asSignatureScheme(value: string): SignatureScheme {
     return value as SignatureScheme;
 }
 
-/** Map a profile version string (e.g. "TLS 1.3") to the {@link ProtocolVersion} wire constant. */
+/**
+ * Map a profile version string (e.g. "TLS 1.3") to the {@link ProtocolVersion}
+ * wire constant. Throws {@link FetchError} for unrecognized strings — an
+ * unknown version is a profile bug, not a default to the most secure option.
+ */
 function toProtocolVersion(s: string): ProtocolVersion {
     switch (s) {
         case "TLS 1.2":
@@ -107,10 +111,9 @@ function toProtocolVersion(s: string): ProtocolVersion {
         case "TLS 1.3":
             return TLS_1_3;
         default:
-            // Unknown version strings default to the most secure option rather
-            // than fail — a profile advertising an unrecognized version is more
-            // likely a forward-compat entry than a hard error.
-            return TLS_1_3;
+            throw new FetchError(`invalid protocol version in profile: ${s}`, {
+                details: { value: s },
+            });
     }
 }
 
