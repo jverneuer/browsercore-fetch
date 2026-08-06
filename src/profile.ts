@@ -14,6 +14,7 @@ import {
     CIPHER_SUITE_CODES,
     NAMED_GROUP_CODES,
     SIGNATURE_SCHEME_CODES,
+    ExtensionType,
     type CipherSuite,
     type NamedGroup,
     type ProtocolVersion,
@@ -116,17 +117,50 @@ function toProtocolVersion(s: string): ProtocolVersion {
 }
 
 /**
+ * The TLS layer negotiates TLS 1.3 only. Profiles may advertise TLS 1.2 (and
+ * older) for middlebox compatibility, but the client cannot handle a server
+ * that negotiates anything below TLS 1.3 — it chokes on the TLS 1.2
+ * ChangeCipherSpec record. Validate every version and reject any that is not
+ * TLS 1.3: a profile advertising an unsupported version is a profile/layer
+ * mismatch that must surface as a {@link FetchError}, not a silent filter.
+ */
+function validateSupportedVersions(versions: readonly string[]): readonly ProtocolVersion[] {
+    const mapped = versions.map((v) => toProtocolVersion(v));
+    const unsupported = mapped.filter((v) => v !== TLS_1_3);
+    if (unsupported.length > 0) {
+        throw new FetchError(
+            `unsupported protocol version in profile: ${unsupported.map((v) => v.wire.toString(16)).join(", ")} (TLS layer negotiates TLS 1.3 only)`,
+            { details: { unsupported: unsupported.map((v) => v.wire) } },
+        );
+    }
+    return mapped;
+}
+
+/**
+ * ECH (encrypted_client_hello, extension 65037) requires HPKE keys the client
+ * does not have. An empty-body ECH makes the ClientHello look odd and some
+ * servers reject it, so the client filters it out of the profile's
+ * extensionOrder before connecting. The TLS layer can still encode an empty
+ * placeholder if ECH is ever explicitly requested.
+ */
+function filterExtensionOrder(extensions: readonly number[]): readonly number[] {
+    return extensions.filter((ext) => ext !== ExtensionType.ENCRYPTED_CLIENT_HELLO);
+}
+
+/**
  * Translate a browser profile into TLS ClientHello configuration. The profile's
  * string arrays are validated and narrowed to the literal unions the TLS layer
- * expects; an invalid value surfaces as a {@link FetchError}.
+ * expects; an invalid value surfaces as a {@link FetchError}. Version and
+ * extension filtering apply client-side policy (TLS 1.3 only, no ECH) before
+ * the config reaches the wire.
  */
 export function profileToTlsConfig(profile: BrowserProfile, serverName: string) {
     return {
         cipherSuites: profile.tls.cipherSuites.map(asCipherSuite),
         keyShareGroups: profile.tls.keyShareGroups.map(asNamedGroup),
         signatureAlgorithms: profile.tls.signatureAlgorithms.map(asSignatureScheme),
-        supportedVersions: profile.tls.supportedVersions.map(toProtocolVersion),
-        extensionOrder: profile.tls.extensionOrder,
+        supportedVersions: validateSupportedVersions(profile.tls.supportedVersions),
+        extensionOrder: filterExtensionOrder(profile.tls.extensionOrder),
         grease: profile.tls.grease,
         serverName,
         alpnProtocols: ALPN_PROTOCOLS,
