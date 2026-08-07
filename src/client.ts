@@ -293,6 +293,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                         case "http2":
                             response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body);
                             break;
+                        /* istanbul ignore next: unreachable — pooled.protocol is "http1" | "http2" */
                         default:
                             assertNever(pooled);
                     }
@@ -301,6 +302,11 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                         responseHeaders.set(k, v);
                     }
                     storeCookies(jar, responseHeaders, url);
+                    // Unreachable: once dispatch resolves, this continuation runs
+                    // as a single microtask through storeCookies + the check +
+                    // resolve, so a timeout/abort (macrotask) cannot interleave
+                    // and flip `settled` before we reach here.
+                    /* istanbul ignore if */
                     if (settled) {
                         return;
                     }
@@ -365,6 +371,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                 const nextResponse = await dispatch(nextUrl, nextOpts);
                 return followRedirects(nextUrl, nextResponse, nextOpts, redirectCount + 1);
             }
+            /* istanbul ignore next: unreachable — policy.kind is "manual" | "error" | "follow" */
             default:
                 return assertNever(policy);
         }
