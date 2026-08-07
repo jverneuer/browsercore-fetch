@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
+import type { Net, DnsResolver } from "@browsercore/contracts";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
+import { ChromeProfiles } from "@browsercore/profiles";
 import { createClient } from "../src/client.js";
 import { RedirectError } from "../src/errors.js";
 
@@ -754,6 +756,137 @@ describe("client — storeCookies domain-mismatch handling", () => {
         const client = createClient({ transportFactory: factory });
         try {
             await expect(client.fetch("http://example.com/")).rejects.toThrow(/malformed name=value/);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Branch-coverage tests for client.ts. Each test targets a specific uncovered
+// branch identified by the v8 coverage report:
+//   - profile loading: buildHeaders `if (profile)` (L162) + dispatch
+//     `profileId ? getProfile(...) : undefined` ternary (L241)
+//   - poolOptions assembly: the `if (options?.<opt> !== undefined)` true
+//     branches for idleTimeoutMs / net / dns (L218/221/224)
+//   - explicit caller-supplied host header: the false branch of
+//     `if (!headers.has("host"))` (L170)
+//   - RedirectError location ternaries (L336, L348) when a redirect response
+//     carries no Location header
+// ---------------------------------------------------------------------------
+
+describe("client — branch coverage: profile, pool options, host header", () => {
+    it("applies a configured profile and forwards net/dns/idleTimeoutMs into the pool", async () => {
+        const seen: FakeRequest[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req);
+            return { status: 200, statusText: "OK", body: "ok" };
+        });
+        // Net/DnsResolver stubs: these are stored into poolOptions but never
+        // invoked, because transportFactory takes precedence over the real-TCP
+        // production path in the pool. They exist purely to exercise the
+        // `if (options?.net/dns !== undefined)` true branches in createClient.
+        const fakeNet: Net = {
+            connect() {
+                throw new Error("net stub unused: transportFactory takes precedence");
+            },
+        };
+        const fakeDns: DnsResolver = {
+            lookup() {
+                return Promise.resolve([{ address: "127.0.0.1", family: 4 as const }]);
+            },
+        };
+        const client = createClient({
+            transportFactory: factory,
+            idleTimeoutMs: 60_000,
+            net: fakeNet,
+            dns: fakeDns,
+            profile: ChromeProfiles.chrome140.id,
+        });
+        try {
+            // Dispatching with a profile resolves getProfile(profileId) (the
+            // L241 ternary true branch) and runs applyHttp1Profile (the
+            // `if (profile)` true branch in buildHeaders).
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.status).toBe(200);
+            expect(await resp.text()).toBe("ok");
+            expect(seen.length).toBe(1);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("preserves a caller-supplied host header (skips the auto-host branch)", async () => {
+        const seen: FakeRequest[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req);
+            return { status: 200, statusText: "OK", body: "ok" };
+        });
+        const client = createClient({ transportFactory: factory });
+        try {
+            // An explicit `host` header means buildHeaders already has one, so
+            // the `if (!headers.has("host"))` branch is skipped (false branch).
+            await client.fetch("http://example.com/", { headers: { host: "custom.example" } });
+            expect(seen[0]?.headers.get("host")).toBe("custom.example");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+describe("client — RedirectError location omitted when Location header is absent", () => {
+    it("policy=error omits location for a redirect with no Location header", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 302,
+            statusText: "Found",
+            body: "",
+        }));
+        const client = createClient({
+            transportFactory: factory,
+            redirectPolicy: { kind: "error" },
+        });
+        try {
+            let caught: RedirectError | undefined;
+            try {
+                await client.fetch("http://example.com/");
+            } catch (err) {
+                caught = err as RedirectError;
+            }
+            // The `location === undefined ? undefined : { location }` ternary
+            // (L336) must take its true branch here.
+            expect(caught).toBeInstanceOf(RedirectError);
+            expect(caught?.location).toBeUndefined();
+            expect(caught?.message).toContain("policy=error");
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("policy=follow omits location when the redirect limit is hit with no Location", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 302,
+            statusText: "Found",
+            body: "",
+        }));
+        const client = createClient({ transportFactory: factory });
+        try {
+            let caught: RedirectError | undefined;
+            try {
+                // maxRedirects: 0 -> the first 3xx immediately exceeds the
+                // limit, taking the `redirectCount >= maxRedirects` branch
+                // before any Location lookup, so the L348 ternary's true
+                // branch (location === undefined) fires.
+                await client.fetch("http://example.com/", { maxRedirects: 0 });
+            } catch (err) {
+                caught = err as RedirectError;
+            }
+            expect(caught).toBeInstanceOf(RedirectError);
+            expect(caught?.message).toContain("redirect limit exceeded");
+            expect(caught?.location).toBeUndefined();
         } finally {
             await client.close();
             await close();
