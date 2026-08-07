@@ -24,7 +24,7 @@ const response = await fetch("https://example.com", { profile: "chrome-140" });
 console.log(response.status, await response.text());
 
 // Reusable client for connection pooling + defaults:
-const client = await createClient({ profile: "chrome-140" });
+const client = createClient({ profile: "chrome-140" });
 try {
     const r1 = await client.fetch("https://example.com");
     const r2 = await client.fetch("https://example.com/api", { method: "POST" });
@@ -40,13 +40,16 @@ try {
 | `fetch()` | function | Top-level convenience — creates a default client |
 | `createClient()` | function | Build a reusable client with defaults |
 | `FetchClient` | interface | Reusable client (fetch + close) |
-| `FetchOptions` | interface | Per-request options (method, headers, body, profile, …) |
-| `FetchResponse` | interface | Response (status, headers, body()/json()/text()) |
-| `RedirectPolicy` | discriminated union | `follow \| manual \| error` |
-| `FetchError` | class | Base typed error |
+| `FetchClientOptions` | interface | Client defaults (cookie jar, profile, timeout, net/dns adapters) |
+| `FetchOptions` | interface | Per-request options (method, headers, body, profile, signal, …) |
+| `FetchResponse` | interface | Response (status, headers, body()/json()/text(), clone()) |
+| `FetchMethod` | type union | `GET \| POST \| PUT \| PATCH \| DELETE \| HEAD \| OPTIONS` |
+| `RedirectPolicy` | discriminated union | `{ kind: "follow" } \| { kind: "manual" } \| { kind: "error" }` |
+| `FetchError` | class | Base typed error (kind/details/cause) |
 | `FetchTimeoutError` | class | Request exceeded timeout |
 | `RedirectError` | class | Redirect loop / limit exceeded |
 | `ProtocolError` | class | ALPN negotiation failure |
+| `AbortError` | class | Request aborted via AbortSignal |
 
 ## Dependency graph
 
