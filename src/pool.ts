@@ -13,6 +13,7 @@
  */
 
 import type { Transport } from "@browsercore/transport";
+import type { Net, DnsResolver } from "@browsercore/contracts";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
 import {
@@ -35,6 +36,16 @@ export interface PoolOptions {
      * Default 30_000.
      */
     idleTimeoutMs?: number;
+    /**
+     * Platform-provided TCP implementation. Injected by the application
+     * entrypoint (e.g. browsersmith passes the Node adapter).
+     */
+    net?: Net;
+    /**
+     * Platform-provided DNS resolver. Injected by the application entrypoint
+     * (e.g. browsersmith passes the Node adapter).
+     */
+    dns?: DnsResolver;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -161,7 +172,14 @@ export function createPool(
         if (options.transportFactory === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
-            transport = await openTcpTransport(url);
+            const net = options.net;
+            const dns = options.dns;
+            if (net === undefined || dns === undefined) {
+                throw new Error(
+                    "FetchClient requires net and dns adapters. Pass them in FetchClientOptions.",
+                );
+            }
+            transport = await openTcpTransport(url, net, dns);
             pooled = await establishConnection(transport, profile, url.host);
         } else {
             // Test seam: a caller-supplied factory yields a transport that
