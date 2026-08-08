@@ -36,6 +36,7 @@ const mockConnectTls = vi.fn();
 const mockConnectHttp1 = vi.fn();
 const mockConnectHttp2 = vi.fn();
 const mockConnectTransport = vi.fn();
+const mockRequireDeps = vi.fn();
 
 vi.mock("@browsercore/tls", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@browsercore/tls")>();
@@ -66,6 +67,7 @@ vi.mock("@browsercore/transport", async (importOriginal) => {
     return {
         ...actual,
         connect: (opts: unknown) => mockConnectTransport(opts),
+        requireDeps: () => mockRequireDeps(),
     };
 });
 
@@ -515,14 +517,26 @@ describe("establishConnection — ALPN dispatch", () => {
 });
 
 describe("openTcpTransport", () => {
-    it("opens a TCP transport to the host/port from the URL", async () => {
+    it("opens a TCP transport to the host/port from the URL, falling back to requireDeps() for net/dns", async () => {
+        // openTcpTransport(url) with no net/dns falls back to requireDeps() — the
+        // Bug 2 fix. The resolved adapters are threaded into the connect() call.
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        mockRequireDeps.mockReset();
+        mockRequireDeps.mockReturnValue({ net, dns });
         mockConnectTransport.mockReset();
         mockConnectTransport.mockResolvedValue({ id: "tcp-1" });
 
         const parsed = parseUrl("https://example.com:8443/path");
         const result = await openTcpTransport(parsed);
         expect(result).toEqual({ id: "tcp-1" });
+        expect(mockRequireDeps).toHaveBeenCalledTimes(1);
         expect(mockConnectTransport).toHaveBeenCalledTimes(1);
-        expect(mockConnectTransport).toHaveBeenCalledWith({ host: "example.com", port: 8443 });
+        expect(mockConnectTransport).toHaveBeenCalledWith({
+            host: "example.com",
+            port: 8443,
+            net,
+            dns,
+        });
     });
 });
