@@ -10,7 +10,7 @@
  * switch, and forwards the decrypted payloads as plain `Uint8Array` chunks.
  */
 
-import { EventEmitter } from "node:events";
+import type { EventProvider } from "@browsercore/contracts";
 import type { CloseReason as TlsCloseReasonType, TlsConnection, TlsState } from "@browsercore/tls";
 import type { CloseReason, Transport, TransportId, TransportState } from "@browsercore/transport";
 import { assertNever, createId } from "./utils.js";
@@ -20,16 +20,46 @@ import { assertNever, createId } from "./utils.js";
  * layers expect. The adapter owns its own {@link TransportId} (independent of
  * the TLS session id) and projects the TLS lifecycle onto transport states.
  */
-// The `Transport` interface itself extends `EventEmitter`, so any Transport
-// implementation must extend it too — `EventTarget` cannot satisfy the contract.
-// eslint-disable-next-line unicorn/prefer-event-target
-export class TlsTransportAdapter extends EventEmitter implements Transport {
+export class TlsTransportAdapter implements Transport {
     public readonly id: TransportId;
+    private readonly events: EventProvider;
     private readonly tls: TlsConnection;
 
-    public constructor(tls: TlsConnection) {
-        super();
+    // -------------------------------------------------------------------------
+    // EventProvider delegation — decouples the adapter from node:events.
+    // -------------------------------------------------------------------------
+
+    public on(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.on(event, listener);
+    }
+
+    public once(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.once(event, listener);
+    }
+
+    public off(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.off(event, listener);
+    }
+
+    public removeListener(event: string, listener: (...args: unknown[]) => void): void {
+        this.events.removeListener(event, listener);
+    }
+
+    public emit(event: string, ...args: unknown[]): boolean {
+        return this.events.emit(event, ...args);
+    }
+
+    public listenerCount(event: string): number {
+        return this.events.listenerCount(event);
+    }
+
+    public removeAllListeners(event?: string): void {
+        this.events.removeAllListeners(event);
+    }
+
+    public constructor(tls: TlsConnection, events: EventProvider) {
         this.id = createId("tls") as TransportId;
+        this.events = events;
         this.tls = tls;
         // Forward close/error from the TLS connection to adapter listeners.
         this.tls.on("close", () => {
@@ -64,8 +94,8 @@ export class TlsTransportAdapter extends EventEmitter implements Transport {
 }
 
 /** Build a {@link Transport} backed by an established {@link TlsConnection}. */
-export function adaptTlsToTransport(tls: TlsConnection): Transport {
-    return new TlsTransportAdapter(tls);
+export function adaptTlsToTransport(tls: TlsConnection, events: EventProvider): Transport {
+    return new TlsTransportAdapter(tls, events);
 }
 
 /** Project a {@link TlsState} onto a {@link TransportState} (exhaustive). */
