@@ -12,7 +12,7 @@
 
 import { crypto } from "@browsercore/crypto";
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
-import type { Net, DnsResolver } from "@browsercore/contracts";
+import type { EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
@@ -156,6 +156,7 @@ export async function establishConnection(
     transport: Transport,
     profile: BrowserProfile,
     serverName: string,
+    events: EventProvider,
 ): Promise<PooledConnection> {
     const tlsConfig = profileToTlsConfig(profile, serverName);
     const tls = await connectTls({
@@ -167,7 +168,9 @@ export async function establishConnection(
     });
     const alpn = tls.alpnProtocol;
     // Adapt the TLS connection to the Transport interface for the HTTP layer.
-    const httpTransport = adaptTlsToTransport(tls);
+    // events is always injected — fetch never provides its own EventProvider;
+    // browsersmith (the composition root) is the sole source. No fallback.
+    const httpTransport = adaptTlsToTransport(tls, events);
     if (alpn === "h2") {
         // Seed the connection preface's SETTINGS frame with the profile's
         // HTTP/2 settings so the peer observes our advertised limits

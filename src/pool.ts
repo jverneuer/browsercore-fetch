@@ -13,7 +13,7 @@
  */
 
 import type { Transport } from "@browsercore/transport";
-import type { Net, DnsResolver } from "@browsercore/contracts";
+import type { EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
 import {
@@ -30,6 +30,12 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 
 /** Options for {@link createPool}. Fields are optional and mutable. */
 export interface PoolOptions {
+    /**
+     * Platform event provider. Injected by the application entrypoint
+     * (e.g. browsersmith passes its EventProvider). Required — fetch never
+     * provides its own; the composition root is the sole source. No fallback.
+     */
+    events: EventProvider;
     /**
      * Idle pool eviction timeout in ms. A pooled connection that goes unused
      * for this duration is closed and evicted. Pass 0 to disable idle eviction.
@@ -172,9 +178,9 @@ export function createPool(
         if (options.transportFactory === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
-            // net/dns come from Platform, threaded through client → pool.
+            // net/dns/events come from Platform, threaded through client → pool.
             transport = await openTcpTransport(url, options.net, options.dns);
-            pooled = await establishConnection(transport, profile, url.host);
+            pooled = await establishConnection(transport, profile, url.host, options.events);
         } else {
             // Test seam: a caller-supplied factory yields a transport that
             // already speaks the HTTP layer's bytes (past any TLS the

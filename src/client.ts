@@ -19,7 +19,7 @@
 /* eslint-disable import/max-dependencies */
 
 import type { Transport } from "@browsercore/transport";
-import type { Net, DnsResolver, Platform } from "@browsercore/contracts";
+import type { EventProvider, Net, DnsResolver, Platform } from "@browsercore/contracts";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
@@ -59,11 +59,18 @@ export interface FetchClientOptions {
     readonly idleTimeoutMs?: number;
     /**
      * Platform composition root. The single decoupled way to inject runtime
-     * dependencies. When provided, `net`/`dns` default to
-     * `platform.network.tcp`/`platform.network.dns` unless explicitly
-     * overridden. No protocol-to-protocol hard wires.
+     * dependencies. When provided, `net`/`dns`/`events` default to
+     * `platform.network.tcp`/`platform.network.dns`/`platform.events` unless
+     * explicitly overridden. No protocol-to-protocol hard wires.
      */
     readonly platform?: Platform;
+    /**
+     * Platform event provider. Injected from `platform` by default; set this
+     * only to override a single adapter. No fallback — fetch never provides
+     * its own EventProvider; browsersmith (the composition root) is the sole
+     * source.
+     */
+    readonly events?: EventProvider;
     /**
      * Platform-provided TCP implementation. Injected from `platform` by
      * default; set this only to override a single adapter.
@@ -218,14 +225,24 @@ function storeCookies(jar: CookieJar, headers: ReadonlyMap<string, string>, url:
 export function createClient(options?: FetchClientOptions): FetchClient {
     const id = createId("fetch") as FetchRequestId;
     const defaultJar: CookieJar = options?.cookieJar ?? createCookieJar();
-    // Resolve net/dns: explicit values win, then fall back to platform's
+    // Resolve net/dns/events: explicit values win, then fall back to platform's
     // adapters. No global singleton — the composition root (browsersmith)
-    // builds the Platform and passes it down through options.
+    // builds the Platform and passes it down through options. No fallback for
+    // events — the composition root is the sole EventProvider source.
     const resolvedNet = options?.net ?? options?.platform?.network.tcp;
     const resolvedDns = options?.dns ?? options?.platform?.network.dns;
+    const resolvedEvents = options?.events ?? options?.platform?.events;
+    if (resolvedEvents === undefined) {
+        throw new Error(
+            "createClient requires an events provider. " +
+                "Pass events directly or via platform.events — " +
+                "fetch has no fallback EventProvider.",
+        );
+    }
     // Assemble pool options so absent optionals stay absent (exactOptionalPropertyTypes
     // rejects `{ idleTimeoutMs: undefined }` when the field is `idleTimeoutMs?: number`).
-    const poolOptions: PoolOptions = {};
+    // `events` is required on PoolOptions, so it is always set here.
+    const poolOptions: PoolOptions = { events: resolvedEvents };
     if (options?.idleTimeoutMs !== undefined) {
         poolOptions.idleTimeoutMs = options.idleTimeoutMs;
     }
