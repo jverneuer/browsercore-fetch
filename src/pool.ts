@@ -172,9 +172,7 @@ export function createPool(
         if (options.transportFactory === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
-            // openTcpTransport falls back to requireDeps() when net/dns are
-            // omitted, so this works with top-level fetch() that never injected
-            // adapters as long as setConnectorDeps() was called at startup.
+            // net/dns come from Platform, threaded through client → pool.
             transport = await openTcpTransport(url, options.net, options.dns);
             pooled = await establishConnection(transport, profile, url.host);
         } else {

@@ -13,7 +13,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
-import { TransportError } from "@browsercore/transport";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 
 // ---------------------------------------------------------------------------
@@ -161,55 +160,49 @@ describe("pool — http2 close path", () => {
 });
 
 describe("pool — adapter error path", () => {
-    // The Bug 2 fix removed the pool's own "net and dns adapters" guard: the
-    // pool now forwards options.net/options.dns unchanged to openTcpTransport,
-    // which falls back to requireDeps() when they are omitted. Adapter
-    // resolution failures therefore surface as a TransportError that the pool
-    // propagates — not a throw with the pool's old bespoke message. These
-    // tests pin that propagation for each "missing adapters" shape.
+    // The pool forwards options.net/options.dns to openTcpTransport. When
+    // adapters are missing, openTcpTransport throws a typed error. The pool
+    // must propagate that error — not swallow it. These tests pin that
+    // propagation for each "missing adapters" shape.
 
-    it("propagates the TransportError when no adapters are provided", async () => {
-        // No transportFactory, no net, no dns: openTcpTransport falls back to
-        // requireDeps(), which throws a TransportError when nothing was
-        // registered. The pool must surface it, not swallow it.
+    it("propagates the error when no adapters are provided", async () => {
+        // No transportFactory, no net, no dns: openTcpTransport throws.
+        // The pool must surface it, not swallow it.
         openTcpTransport.mockReset();
         openTcpTransport.mockRejectedValueOnce(
-            new TransportError(
-                "Transport dependencies not initialized. Call setConnectorDeps() before using directConnector or createHttpProxy.",
-            ),
+            new Error("openTcpTransport requires net and dns adapters."),
         );
 
         const pool = createPool({}, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toBeInstanceOf(
-            TransportError,
+        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+            "openTcpTransport requires net and dns adapters",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
         openTcpTransport.mockReset();
     });
 
-    it("propagates the TransportError when only net is provided (dns missing)", async () => {
-        // net without dns: openTcpTransport's `net && dns` guard is false, so it
-        // still falls back to requireDeps() → throws. Same propagation contract.
+    it("propagates the error when only net is provided (dns missing)", async () => {
+        // net without dns: openTcpTransport throws. Same propagation contract.
         openTcpTransport.mockReset();
-        openTcpTransport.mockRejectedValueOnce(new TransportError("dns adapter missing"));
+        openTcpTransport.mockRejectedValueOnce(new Error("dns adapter missing"));
 
         const net = { connect: vi.fn() } as never;
         const pool = createPool({ net }, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toBeInstanceOf(
-            TransportError,
+        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+            "dns adapter missing",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
         openTcpTransport.mockReset();
     });
 
-    it("propagates the TransportError when only dns is provided (net missing)", async () => {
+    it("propagates the error when only dns is provided (net missing)", async () => {
         openTcpTransport.mockReset();
-        openTcpTransport.mockRejectedValueOnce(new TransportError("net adapter missing"));
+        openTcpTransport.mockRejectedValueOnce(new Error("net adapter missing"));
 
         const dns = { resolve: vi.fn() } as never;
         const pool = createPool({ dns }, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toBeInstanceOf(
-            TransportError,
+        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+            "net adapter missing",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
         openTcpTransport.mockReset();
