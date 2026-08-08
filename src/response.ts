@@ -6,7 +6,7 @@
  * decompression, and the once-consumable body with `clone()`.
  */
 
-import { compression } from "@browsercore/compression";
+import type { CompressionProvider, ContentEncoding } from "@browsercore/contracts";
 import type { HttpBodyKind } from "@browsercore/http1";
 import { FetchError } from "./errors.js";
 import type { FetchResponse } from "./types.js";
@@ -28,10 +28,10 @@ export function readSetCookie(headers: ReadonlyMap<string, string>): string[] {
 }
 
 /** Read the `content-encoding` header (case-insensitive) from a response header map. */
-export function readContentEncoding(headers: ReadonlyMap<string, string>): string | undefined {
+export function readContentEncoding(headers: ReadonlyMap<string, string>): ContentEncoding | undefined {
     for (const [name, value] of headers) {
         if (name.toLowerCase() === "content-encoding") {
-            return value;
+            return value as ContentEncoding;
         }
     }
     return undefined;
@@ -40,12 +40,24 @@ export function readContentEncoding(headers: ReadonlyMap<string, string>): strin
 /**
  * Decompress a body if `content-encoding` is set; otherwise return as-is.
  *
- * Delegates to `@browsercore/compression`, which implements browser-tolerant
- * decoding (notably the zlib/raw `deflate` fallback). No-op when no encoding.
+ * `compression` is the platform-provided decompression surface (e.g.
+ * `@browsercore/compression`). Injected so protocol code never binds to
+ * `node:zlib` directly. No-op when no encoding; throws if an encoding is set
+ * but no provider was injected.
  */
-export function decompressBody(body: Uint8Array, encoding: string | undefined): Uint8Array {
-    if (encoding === undefined || encoding === "") {
+export function decompressBody(
+    compression: CompressionProvider | undefined,
+    body: Uint8Array,
+    encoding: ContentEncoding | undefined,
+): Uint8Array {
+    if (encoding === undefined) {
         return body;
+    }
+    if (compression === undefined) {
+        throw new FetchError(
+            "decompressBody requires a compression provider for encoded responses. " +
+                "Pass compression via FetchClientOptions or provide a Platform.",
+        );
     }
     return compression.decompress(body, encoding);
 }
@@ -66,13 +78,14 @@ export function buildResponse(
     statusText: string,
     headers: ReadonlyMap<string, string>,
     rawBody: Uint8Array,
-    encoding?: string,
+    encoding: ContentEncoding | undefined,
+    compression: CompressionProvider | undefined,
 ): FetchResponse {
     const headerRecord: Record<string, string> = {};
     for (const [name, value] of headers) {
         headerRecord[name] = value;
     }
-    const body = decompressBody(rawBody, encoding);
+    const body = decompressBody(compression, rawBody, encoding);
 
     // The body can be consumed once. `clone()` re-derives a fresh response so
     // the caller can re-read after the first consumption.
@@ -108,7 +121,7 @@ export function buildResponse(
         clone(): FetchResponse {
             // A clone re-derives from the original bytes with its own
             // `consumed` flag, so each copy can be read independently.
-            return buildResponse(url, statusCode, statusText, headers, rawBody, encoding);
+            return buildResponse(url, statusCode, statusText, headers, rawBody, encoding, compression);
         },
     };
 }

@@ -262,7 +262,7 @@ describe("pool integration — Platform provides adapters", () => {
 
         const platform = fakePlatform();
         const pool: ConnectionPool = createPool(
-            { net: platform.network.tcp, dns: platform.network.dns },
+            { net: platform.network.tcp, dns: platform.network.dns, crypto: platform.crypto.provider },
             lookupProfile,
             fallbackProfile(),
         );
