@@ -515,14 +515,32 @@ describe("establishConnection — ALPN dispatch", () => {
 });
 
 describe("openTcpTransport", () => {
-    it("opens a TCP transport to the host/port from the URL", async () => {
+    it("opens a TCP transport to the host/port from the URL using provided net/dns adapters", async () => {
+        // Decoupled: adapters come from Platform, threaded through options.
+        // No fallback to a global singleton — that was the steel chain.
+        const net = { connect: vi.fn() } as never;
+        const dns = { lookup: vi.fn() } as never;
         mockConnectTransport.mockReset();
         mockConnectTransport.mockResolvedValue({ id: "tcp-1" });
 
         const parsed = parseUrl("https://example.com:8443/path");
-        const result = await openTcpTransport(parsed);
+        const result = await openTcpTransport(parsed, net, dns);
         expect(result).toEqual({ id: "tcp-1" });
         expect(mockConnectTransport).toHaveBeenCalledTimes(1);
-        expect(mockConnectTransport).toHaveBeenCalledWith({ host: "example.com", port: 8443 });
+        expect(mockConnectTransport).toHaveBeenCalledWith({
+            host: "example.com",
+            port: 8443,
+            net,
+            dns,
+        });
+    });
+
+    it("throws FetchError when called without net/dns adapters", () => {
+        mockConnectTransport.mockReset();
+        const parsed = parseUrl("https://example.com:8443/path");
+        expect(() => openTcpTransport(parsed)).toThrow(
+            "openTcpTransport requires net and dns adapters",
+        );
+        expect(mockConnectTransport).not.toHaveBeenCalled();
     });
 });

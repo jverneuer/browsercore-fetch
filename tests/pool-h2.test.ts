@@ -159,30 +159,53 @@ describe("pool — http2 close path", () => {
     });
 });
 
-describe("pool — net/dns error path", () => {
-    it("throws when net and dns adapters are missing", async () => {
-        // No transportFactory, no net, no dns: establishAndStore hits the
-        // guard that throws before opening any transport.
+describe("pool — adapter error path", () => {
+    // The pool forwards options.net/options.dns to openTcpTransport. When
+    // adapters are missing, openTcpTransport throws a typed error. The pool
+    // must propagate that error — not swallow it. These tests pin that
+    // propagation for each "missing adapters" shape.
+
+    it("propagates the error when no adapters are provided", async () => {
+        // No transportFactory, no net, no dns: openTcpTransport throws.
+        // The pool must surface it, not swallow it.
+        openTcpTransport.mockReset();
+        openTcpTransport.mockRejectedValueOnce(
+            new Error("openTcpTransport requires net and dns adapters."),
+        );
+
         const pool = createPool({}, lookup, fallbackProfile());
         await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
-            "FetchClient requires net and dns adapters. Pass them in FetchClientOptions.",
+            "openTcpTransport requires net and dns adapters",
         );
+        expect(openTcpTransport).toHaveBeenCalledTimes(1);
+        openTcpTransport.mockReset();
     });
 
-    it("throws when only net is provided (dns missing)", async () => {
+    it("propagates the error when only net is provided (dns missing)", async () => {
+        // net without dns: openTcpTransport throws. Same propagation contract.
+        openTcpTransport.mockReset();
+        openTcpTransport.mockRejectedValueOnce(new Error("dns adapter missing"));
+
         const net = { connect: vi.fn() } as never;
         const pool = createPool({ net }, lookup, fallbackProfile());
         await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
-            "FetchClient requires net and dns adapters. Pass them in FetchClientOptions.",
+            "dns adapter missing",
         );
+        expect(openTcpTransport).toHaveBeenCalledTimes(1);
+        openTcpTransport.mockReset();
     });
 
-    it("throws when only dns is provided (net missing)", async () => {
+    it("propagates the error when only dns is provided (net missing)", async () => {
+        openTcpTransport.mockReset();
+        openTcpTransport.mockRejectedValueOnce(new Error("net adapter missing"));
+
         const dns = { resolve: vi.fn() } as never;
         const pool = createPool({ dns }, lookup, fallbackProfile());
         await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
-            "FetchClient requires net and dns adapters. Pass them in FetchClientOptions.",
+            "net adapter missing",
         );
+        expect(openTcpTransport).toHaveBeenCalledTimes(1);
+        openTcpTransport.mockReset();
     });
 });
 

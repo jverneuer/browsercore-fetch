@@ -19,7 +19,7 @@
 /* eslint-disable import/max-dependencies */
 
 import type { Transport } from "@browsercore/transport";
-import type { Net, DnsResolver } from "@browsercore/contracts";
+import type { Net, DnsResolver, Platform } from "@browsercore/contracts";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
@@ -58,14 +58,20 @@ export interface FetchClientOptions {
      */
     readonly idleTimeoutMs?: number;
     /**
-     * Platform-provided TCP implementation. Injected by the application
-     * entrypoint (e.g. browsersmith passes the Node adapter). Required for
-     * production use — without it, the client cannot open real TCP connections.
+     * Platform composition root. The single decoupled way to inject runtime
+     * dependencies. When provided, `net`/`dns` default to
+     * `platform.network.tcp`/`platform.network.dns` unless explicitly
+     * overridden. No protocol-to-protocol hard wires.
+     */
+    readonly platform?: Platform;
+    /**
+     * Platform-provided TCP implementation. Injected from `platform` by
+     * default; set this only to override a single adapter.
      */
     readonly net?: Net;
     /**
-     * Platform-provided DNS resolver. Injected by the application entrypoint
-     * (e.g. browsersmith passes the Node adapter). Required for production use.
+     * Platform-provided DNS resolver. Injected from `platform` by default;
+     * set this only to override a single adapter.
      */
     readonly dns?: DnsResolver;
     /**
@@ -212,17 +218,22 @@ function storeCookies(jar: CookieJar, headers: ReadonlyMap<string, string>, url:
 export function createClient(options?: FetchClientOptions): FetchClient {
     const id = createId("fetch") as FetchRequestId;
     const defaultJar: CookieJar = options?.cookieJar ?? createCookieJar();
+    // Resolve net/dns: explicit values win, then fall back to platform's
+    // adapters. No global singleton — the composition root (browsersmith)
+    // builds the Platform and passes it down through options.
+    const resolvedNet = options?.net ?? options?.platform?.network.tcp;
+    const resolvedDns = options?.dns ?? options?.platform?.network.dns;
     // Assemble pool options so absent optionals stay absent (exactOptionalPropertyTypes
     // rejects `{ idleTimeoutMs: undefined }` when the field is `idleTimeoutMs?: number`).
     const poolOptions: PoolOptions = {};
     if (options?.idleTimeoutMs !== undefined) {
         poolOptions.idleTimeoutMs = options.idleTimeoutMs;
     }
-    if (options?.net !== undefined) {
-        poolOptions.net = options.net;
+    if (resolvedNet !== undefined) {
+        poolOptions.net = resolvedNet;
     }
-    if (options?.dns !== undefined) {
-        poolOptions.dns = options.dns;
+    if (resolvedDns !== undefined) {
+        poolOptions.dns = resolvedDns;
     }
     if (options?.transportFactory !== undefined) {
         poolOptions.transportFactory = options.transportFactory;

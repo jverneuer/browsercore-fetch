@@ -172,14 +172,8 @@ export function createPool(
         if (options.transportFactory === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
-            const net = options.net;
-            const dns = options.dns;
-            if (net === undefined || dns === undefined) {
-                throw new Error(
-                    "FetchClient requires net and dns adapters. Pass them in FetchClientOptions.",
-                );
-            }
-            transport = await openTcpTransport(url, net, dns);
+            // net/dns come from Platform, threaded through client → pool.
+            transport = await openTcpTransport(url, options.net, options.dns);
             pooled = await establishConnection(transport, profile, url.host);
         } else {
             // Test seam: a caller-supplied factory yields a transport that

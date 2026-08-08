@@ -51,7 +51,7 @@
     },
     "dependencies": {
         "@browsercore/compression": "0.2.0",
-        "@browsercore/contracts": "0.2.0",
+        "@browsercore/contracts": "0.2.1",
         "@browsercore/cookies": "0.2.0",
         "@browsercore/crypto": "0.2.1",
         "@browsercore/http1": "0.2.0",

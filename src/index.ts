@@ -28,6 +28,7 @@ export type {
 export { assertNever } from "./utils.js";
 
 import { createClient, type FetchClientOptions } from "./client.js";
+import type { Platform } from "@browsercore/contracts";
 import type { FetchOptions, FetchResponse } from "./types.js";
 
 /**
@@ -36,11 +37,11 @@ import type { FetchOptions, FetchResponse } from "./types.js";
  *
  * @example
  * ```ts
- * const response = await fetch("https://example.com", { profile: "chrome-140" });
+ * const response = await fetch("https://example.com", { profile: "chrome-140" }, platform);
  * console.log(response.status, await response.text());
  * ```
  */
-export function fetch(input: string, options?: FetchOptions): Promise<FetchResponse> {
+export function fetch(input: string, options?: FetchOptions, platform?: Platform): Promise<FetchResponse> {
     // Only assign defaults that are actually present. Under
     // exactOptionalPropertyTypes, `cookieJar?: CookieJar` does not accept an
     // explicit `undefined`, so spreading absent keys keeps the object valid.
@@ -53,6 +54,9 @@ export function fetch(input: string, options?: FetchOptions): Promise<FetchRespo
     }
     if (options?.timeoutMs !== undefined) {
         defaults.timeoutMs = options.timeoutMs;
+    }
+    if (platform !== undefined) {
+        defaults.platform = platform;
     }
     const client = createClient(defaults);
     return client.fetch(input, options).finally(() => {
