@@ -98,17 +98,27 @@ function asSignatureScheme(value: string): SignatureScheme {
     return value as SignatureScheme;
 }
 
+// Version strings the TLS layer recognizes. Legacy versions (TLS 1.2/1.1/1.0)
+// are advertised by real browsers for middlebox compatibility but are not
+// negotiated here — they are silently dropped.
+const RECOGNIZED_VERSIONS = new Set(["TLS 1.2", "TLS 1.3", "TLS 1.1", "TLS 1.0"]);
+
 /**
  * Map a profile version string (e.g. "TLS 1.3") to the {@link ProtocolVersion}
  * wire constant. Throws {@link FetchError} for unrecognized strings — an
  * unknown version is a profile bug, not a default to the most secure option.
  */
-function toProtocolVersion(s: string): ProtocolVersion {
+function toProtocolVersion(s: string): ProtocolVersion | null {
     switch (s) {
         case "TLS 1.2":
             return TLS_1_2;
         case "TLS 1.3":
             return TLS_1_3;
+        case "TLS 1.1":
+        case "TLS 1.0":
+            // Legacy versions — recognized but not negotiated. Return null so
+            // the caller can filter them out.
+            return null;
         default:
             throw new FetchError(`invalid protocol version in profile: ${s}`, {
                 details: { value: s },
@@ -117,23 +127,27 @@ function toProtocolVersion(s: string): ProtocolVersion {
 }
 
 /**
- * The TLS layer negotiates TLS 1.3 only. Profiles may advertise TLS 1.2 (and
- * older) for middlebox compatibility, but the client cannot handle a server
- * that negotiates anything below TLS 1.3 — it chokes on the TLS 1.2
- * ChangeCipherSpec record. Validate every version and reject any that is not
- * TLS 1.3: a profile advertising an unsupported version is a profile/layer
- * mismatch that must surface as a {@link FetchError}, not a silent filter.
+ * The TLS layer negotiates TLS 1.3 only. Real browser profiles advertise
+ * legacy versions (TLS 1.2/1.1/1.0) alongside TLS 1.3 for middlebox
+ * compatibility — they always negotiate TLS 1.3 when the server supports it.
+ * Silently filter down to TLS 1.3 only. A profile that advertises NO TLS 1.3
+ * at all is a real profile/layer mismatch and must surface as a
+ * {@link FetchError}.
  */
 function validateSupportedVersions(versions: readonly string[]): readonly ProtocolVersion[] {
-    const mapped = versions.map((v) => toProtocolVersion(v));
-    const unsupported = mapped.filter((v) => v !== TLS_1_3);
-    if (unsupported.length > 0) {
+    // Drop unrecognized strings silently — they are legacy versions, not bugs.
+    const recognized = versions.filter((v) => RECOGNIZED_VERSIONS.has(v));
+    const mapped = recognized
+        .map((v) => toProtocolVersion(v))
+        .filter((v): v is ProtocolVersion => v !== null);
+    const supported = mapped.filter((v) => v === TLS_1_3);
+    if (supported.length === 0) {
         throw new FetchError(
-            `unsupported protocol version in profile: ${unsupported.map((v) => v.wire.toString(16)).join(", ")} (TLS layer negotiates TLS 1.3 only)`,
-            { details: { unsupported: unsupported.map((v) => v.wire) } },
+            `profile advertises no TLS 1.3 version (TLS layer negotiates TLS 1.3 only)`,
+            { details: { unsupported: mapped.map((v) => v.wire) } },
         );
     }
-    return mapped;
+    return supported;
 }
 
 /**

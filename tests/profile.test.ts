@@ -71,16 +71,25 @@ describe("profileToTlsConfig", () => {
         expect(cfg.alpnProtocols).toEqual(["h2", "http/1.1"]);
     });
 
-    it("rejects TLS 1.2 in supportedVersions — TLS layer negotiates TLS 1.3 only", () => {
-        // TLS 1.2 is recognized by toProtocolVersion but rejected by
-        // validateSupportedVersions because the TLS layer negotiates TLS 1.3 only.
+    it("filters TLS 1.2 from supportedVersions — keeps only TLS 1.3", () => {
+        // Real browser profiles advertise TLS 1.2 alongside TLS 1.3 for
+        // middlebox compatibility. The TLS layer negotiates TLS 1.3 only,
+        // so TLS 1.2 is silently dropped — not rejected.
         const profile = makeProfile();
         profile.tls.supportedVersions = ["TLS 1.3", "TLS 1.2"];
+        const cfg = profileToTlsConfig(profile, "h");
+        expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
+    });
+
+    it("throws when profile advertises ONLY TLS 1.2 (no TLS 1.3)", () => {
+        // A profile with no TLS 1.3 at all is a real mismatch.
+        const profile = makeProfile();
+        profile.tls.supportedVersions = ["TLS 1.2"];
         expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
         try {
             profileToTlsConfig(profile, "h");
         } catch (err) {
-            expect((err as FetchError).message).toContain("unsupported protocol version");
+            expect((err as FetchError).message).toContain("no TLS 1.3");
         }
     });
 
@@ -91,15 +100,23 @@ describe("profileToTlsConfig", () => {
         expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
     });
 
-    it("rejects an unrecognized version string with FetchError", () => {
+    it("silently filters an unrecognized version string", () => {
+        // Unrecognized version strings (not in the recognized set) are
+        // silently dropped — only TLS 1.3 is kept.
         const profile = makeProfile();
         profile.tls.supportedVersions = ["TLS 9.9", "TLS 1.3"];
+        const cfg = profileToTlsConfig(profile, "h");
+        expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
+    });
+
+    it("throws when profile advertises only unrecognized versions (no TLS 1.3)", () => {
+        const profile = makeProfile();
+        profile.tls.supportedVersions = ["TLS 9.9", "TLS 8.8"];
         expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
         try {
             profileToTlsConfig(profile, "h");
         } catch (err) {
-            expect((err as FetchError).message).toContain("protocol version");
-            expect((err as FetchError).details.value).toBe("TLS 9.9");
+            expect((err as FetchError).message).toContain("no TLS 1.3");
         }
     });
 
@@ -222,40 +239,25 @@ describe("shipped profiles pass fetch validation", () => {
     const firefox = FirefoxProfiles.firefox128;
     const safari = SafariProfiles.safari17;
 
-    it("chrome-140 TLS fingerprint throws — profile advertises TLS 1.2 which the TLS layer does not support", () => {
-        // Chrome profiles advertise TLS 1.2 for middlebox compatibility, but the
-        // TLS layer negotiates TLS 1.3 only. This mismatch must surface as a
-        // FetchError. (Tracked: GitHub issue — add TLS 1.2 support to the TLS layer.)
-        expect(() => profileToTlsConfig(chrome, "example.com")).toThrow(FetchError);
-        try {
-            profileToTlsConfig(chrome, "example.com");
-        } catch (err) {
-            expect((err as FetchError).message).toContain("unsupported protocol version");
-        }
+    it("chrome-140 TLS fingerprint passes — TLS 1.2 silently filtered, TLS 1.3 kept", () => {
+        // Chrome profiles advertise TLS 1.2 alongside TLS 1.3 for middlebox
+        // compatibility. The TLS layer negotiates TLS 1.3 only, so TLS 1.2
+        // is silently dropped.
+        const cfg = profileToTlsConfig(chrome, "example.com");
+        expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
     });
 
-    it("firefox-128 TLS fingerprint throws — profile advertises TLS 1.2 which the TLS layer does not support", () => {
-        expect(() => profileToTlsConfig(firefox, "example.com")).toThrow(FetchError);
-        try {
-            profileToTlsConfig(firefox, "example.com");
-        } catch (err) {
-            expect((err as FetchError).message).toContain("unsupported protocol version");
-        }
+    it("firefox-128 TLS fingerprint passes — TLS 1.2 silently filtered, TLS 1.3 kept", () => {
+        const cfg = profileToTlsConfig(firefox, "example.com");
+        expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
     });
 
-    it("safari-17 TLS fingerprint throws — profile advertises TLS 1.2/1.1/1.0 which the TLS layer does not support", () => {
-        // The safari profile advertises TLS 1.2, TLS 1.1 and TLS 1.0 in supportedVersions,
-        // but the TLS layer negotiates TLS 1.3 only. TLS 1.1/1.0 are not recognized
-        // by toProtocolVersion (invalid protocol version); TLS 1.2 is recognized
-        // but rejected by validateSupportedVersions (unsupported protocol version).
-        // Either way, the mismatch surfaces as a FetchError.
-        // (Tracked: GitHub issue — add TLS 1.2 support to the TLS layer.)
-        expect(() => profileToTlsConfig(safari, "example.com")).toThrow(FetchError);
-        try {
-            profileToTlsConfig(safari, "example.com");
-        } catch (err) {
-            expect((err as FetchError).message).toMatch(/protocol version/);
-        }
+    it("safari-17 TLS fingerprint passes — TLS 1.2/1.1/1.0 silently filtered, TLS 1.3 kept", () => {
+        // Safari advertises legacy versions for compatibility. TLS 1.1/1.0
+        // are unrecognized by toProtocolVersion and filtered; TLS 1.2 is
+        // recognized but dropped. TLS 1.3 remains.
+        const cfg = profileToTlsConfig(safari, "example.com");
+        expect(cfg.supportedVersions.map((v) => v.wire)).toEqual([0x0304]);
     });
 
     it("every suite across the three profiles is in the allow-list", () => {
