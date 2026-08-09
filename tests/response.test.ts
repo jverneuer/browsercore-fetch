@@ -7,12 +7,7 @@ import {
     readSetCookie,
 } from "../src/response.js";
 import { FetchError } from "../src/errors.js";
-import { compression as testCompression } from "@browsercore/compression";
-
-// Compression provider for tests that exercise decompression directly.
-// The real @browsercore/compression singleton — tests may wire concrete
-// implementations; production code receives it via Platform only.
-const compression = testCompression;
+import { compression } from "./helpers/test-compression.js";
 
 function utf8(s: string): Uint8Array {
     return new TextEncoder().encode(s);

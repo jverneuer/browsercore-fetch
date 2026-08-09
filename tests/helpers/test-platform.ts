@@ -22,7 +22,7 @@ import type {
     Scheduler,
 } from "@browsercore/contracts";
 import { crypto } from "@browsercore/crypto";
-import { compression } from "@browsercore/compression";
+import { compression } from "./test-compression.js";
 
 const net: Net = {
     connect: () => {

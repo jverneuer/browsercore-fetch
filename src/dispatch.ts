@@ -175,6 +175,7 @@ export async function establishConnection(
         serverName,
         profile: tlsConfig,
         alpnProtocols: ALPN_PROTOCOLS,
+        events,
         crypto,
     });
     const alpn = tls.alpnProtocol;
@@ -187,7 +188,7 @@ export async function establishConnection(
         // HTTP/2 settings so the peer observes our advertised limits
         // (window size, max frame size, header table size, …) from the start.
         const initialSettings = profileHttp2Settings(profile);
-        const conn = await connectHttp2({ transport: httpTransport, initialSettings, crypto });
+        const conn = await connectHttp2({ transport: httpTransport, initialSettings, events, crypto });
         // Settings are seeded into the connection preface via initialSettings
         // above; they cannot be mutated post-connect (see profile.ts).
         return { protocol: "http2", id: conn.id, conn };

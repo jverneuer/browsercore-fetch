@@ -24,14 +24,9 @@ import type { ParsedUrl } from "../src/types.js";
 import type { TlsConnection } from "@browsercore/tls";
 import type { Transport } from "@browsercore/transport";
 import type { BrowserProfile } from "@browsercore/profiles";
-import { compression as testCompression } from "@browsercore/compression";
+import { compression } from "./helpers/test-compression.js";
 import { crypto as testCrypto } from "@browsercore/crypto";
 import { stubEvents } from "./helpers/test-platform.js";
-
-// Compression provider for tests that exercise http2 decompression directly.
-// The real @browsercore/compression singleton — tests may wire concrete
-// implementations; production code receives it via Platform only.
-const compression = testCompression;
 
 // Crypto provider for tests that exercise establishConnection directly. The
 // real @browsercore/crypto singleton — the lower layers (connectTls/connectHttp2)
