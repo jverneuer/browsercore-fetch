@@ -21,7 +21,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { vi as vitestVi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Net, DnsResolver, Platform } from "@browsercore/contracts";
+import type { Net, DnsResolver, EventProvider, Platform } from "@browsercore/contracts";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import type {
@@ -222,7 +222,7 @@ describe("openTcpTransport — uses provided adapters", () => {
         mockConnect.mockResolvedValue(new StubTransport());
 
         const parsed = url("https://example.com:8443/path");
-        const result = await openTcpTransport(parsed, fakeNet, fakeDns);
+        const result = await openTcpTransport(parsed, fakeNet, fakeDns, new EventEmitter() as unknown as EventProvider);
 
         expect(mockConnect).toHaveBeenCalledTimes(1);
         const connectArg = mockConnect.mock.calls[0]! as ReadonlyArray<unknown>;
@@ -262,7 +262,7 @@ describe("pool integration — Platform provides adapters", () => {
 
         const platform = fakePlatform();
         const pool: ConnectionPool = createPool(
-            { net: platform.network.tcp, dns: platform.network.dns, crypto: platform.crypto.provider },
+            { net: platform.network.tcp, dns: platform.network.dns, crypto: platform.crypto.provider, events: new EventEmitter() as unknown as EventProvider },
             lookupProfile,
             fallbackProfile(),
         );

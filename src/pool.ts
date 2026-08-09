@@ -189,7 +189,7 @@ export function createPool(
             // net/dns/events/crypto come from Platform, threaded through
             // client → pool. openTcpTransport throws a clear error when net/dns
             // are missing, so let it run first to preserve that error path.
-            transport = await openTcpTransport(url, options.net, options.dns);
+            transport = await openTcpTransport(url, options.net, options.dns, options.events);
             // crypto is required for the real-TCP path (TLS handshake + HTTP/2):
             // throw a clear error if it is missing rather than failing later in
             // the handshake with a confusing "crypto undefined" message.
