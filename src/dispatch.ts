@@ -211,12 +211,18 @@ export async function establishHttp1OverTransport(transport: Transport): Promise
  * options chain (client → pool → dispatch). No fallback to a global
  * singleton — that would re-introduce a hard wire from fetch → transport.
  */
-export function openTcpTransport(url: ParsedUrl, net?: Net, dns?: DnsResolver): Promise<Transport> {
+export function openTcpTransport(url: ParsedUrl, net: Net | undefined, dns: DnsResolver | undefined, events: EventProvider | undefined): Promise<Transport> {
     if (net === undefined || dns === undefined) {
         throw new FetchError(
             "openTcpTransport requires net and dns adapters. " +
                 "Pass a Platform through FetchClientOptions so they flow down.",
         );
     }
-    return connectTransport({ host: url.host, port: url.port, net, dns });
+    if (events === undefined) {
+        throw new FetchError(
+            "openTcpTransport requires an events provider. " +
+                "Pass a Platform through FetchClientOptions so events flow down.",
+        );
+    }
+    return connectTransport({ host: url.host, port: url.port, net, dns, events });
 }

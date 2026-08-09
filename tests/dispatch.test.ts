@@ -551,7 +551,8 @@ describe("openTcpTransport", () => {
         mockConnectTransport.mockResolvedValue({ id: "tcp-1" });
 
         const parsed = parseUrl("https://example.com:8443/path");
-        const result = await openTcpTransport(parsed, net, dns);
+        const events = stubEvents();
+        const result = await openTcpTransport(parsed, net, dns, events);
         expect(result).toEqual({ id: "tcp-1" });
         expect(mockConnectTransport).toHaveBeenCalledTimes(1);
         expect(mockConnectTransport).toHaveBeenCalledWith({
@@ -559,6 +560,7 @@ describe("openTcpTransport", () => {
             port: 8443,
             net,
             dns,
+            events,
         });
     });
 
