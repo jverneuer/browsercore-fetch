@@ -13,9 +13,10 @@
  */
 
 import type { Transport } from "@browsercore/transport";
-import type { Net, DnsResolver } from "@browsercore/contracts";
+import type { CryptoProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
+import { FetchError } from "./errors.js";
 import {
     establishConnection,
     establishHttp1OverTransport,
@@ -30,6 +31,12 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 
 /** Options for {@link createPool}. Fields are optional and mutable. */
 export interface PoolOptions {
+    /**
+     * Platform event provider. Injected by the application entrypoint
+     * (e.g. browsersmith passes its EventProvider). Required — fetch never
+     * provides its own; the composition root is the sole source. No fallback.
+     */
+    events: EventProvider;
     /**
      * Idle pool eviction timeout in ms. A pooled connection that goes unused
      * for this duration is closed and evicted. Pass 0 to disable idle eviction.
@@ -46,6 +53,13 @@ export interface PoolOptions {
      * (e.g. browsersmith passes the Node adapter).
      */
     dns?: DnsResolver;
+    /**
+     * Platform crypto provider. Injected by the application entrypoint
+     * (e.g. browsersmith passes `platform.crypto.provider`). Required for the
+     * real-TCP path (TLS handshake + HTTP/2); the test seam (`transportFactory`)
+     * bypasses it.
+     */
+    crypto?: CryptoProvider;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -172,9 +186,20 @@ export function createPool(
         if (options.transportFactory === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
-            // net/dns come from Platform, threaded through client → pool.
+            // net/dns/events/crypto come from Platform, threaded through
+            // client → pool. openTcpTransport throws a clear error when net/dns
+            // are missing, so let it run first to preserve that error path.
             transport = await openTcpTransport(url, options.net, options.dns);
-            pooled = await establishConnection(transport, profile, url.host);
+            // crypto is required for the real-TCP path (TLS handshake + HTTP/2):
+            // throw a clear error if it is missing rather than failing later in
+            // the handshake with a confusing "crypto undefined" message.
+            if (options.crypto === undefined) {
+                throw new FetchError(
+                    "createPool requires a crypto provider for the real-TCP path. " +
+                        "Pass crypto via PoolOptions or provide a Platform.",
+                );
+            }
+            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto);
         } else {
             // Test seam: a caller-supplied factory yields a transport that
             // already speaks the HTTP layer's bytes (past any TLS the

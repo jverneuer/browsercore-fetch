@@ -5,6 +5,12 @@ import type { Transport, TransportId, TransportState } from "@browsercore/transp
 import { ChromeProfiles } from "@browsercore/profiles";
 import { createClient } from "../src/client.js";
 import { RedirectError } from "../src/errors.js";
+import { stubEvents } from "./helpers/test-platform.js";
+
+// The transportFactory seam bypasses the real-TCP path, so only an event
+// provider is required — fetch never provides its own EventProvider; the
+// composition root (browsersmith) is the sole source in production.
+const events = stubEvents();
 
 // ---------------------------------------------------------------------------
 // In-memory HTTP/1.1 fake backend (same model as fetch.test.ts, trimmed to the
@@ -247,7 +253,7 @@ describe("client — redirect policy: manual", () => {
             headers: { location: "http://example.com/elsewhere" },
             body: "",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/", { followRedirects: false });
             expect(resp.status).toBe(302);
@@ -264,7 +270,7 @@ describe("client — redirect policy: manual", () => {
             statusText: "OK",
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/", { followRedirects: false });
             expect(resp.status).toBe(200);
@@ -287,6 +293,7 @@ describe("client — redirect policy: error", () => {
         const client = createClient({
             transportFactory: factory,
             redirectPolicy: { kind: "error" },
+            events,
         });
         try {
             await expect(client.fetch("http://example.com/")).rejects.toBeInstanceOf(RedirectError);
@@ -312,6 +319,7 @@ describe("client — redirect policy: error", () => {
         const client = createClient({
             transportFactory: factory,
             redirectPolicy: { kind: "error" },
+            events,
         });
         try {
             const resp = await client.fetch("http://example.com/");
@@ -333,7 +341,7 @@ describe("client — redirect policy: follow", () => {
             }
             return { status: 200, statusText: "OK", body: "done" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/start");
             expect(resp.status).toBe(200);
@@ -353,7 +361,7 @@ describe("client — redirect policy: follow", () => {
             headers: { location: req.url },
             body: "",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             await expect(
                 client.fetch("http://example.com/loop", { maxRedirects: 3 }),
@@ -376,7 +384,7 @@ describe("client — redirect policy: follow", () => {
             statusText: "Found",
             body: "no location",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/");
             expect(resp.status).toBe(302);
@@ -400,7 +408,7 @@ describe("client — 303 See Other body stripping", () => {
             }
             return { status: 200, statusText: "OK", body: "got" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/put", {
                 method: "PUT",
@@ -426,7 +434,7 @@ describe("client — 303 See Other body stripping", () => {
                 }
                 return { status: 200, statusText: "OK", body: "" };
             });
-            const client = createClient({ transportFactory: factory });
+            const client = createClient({ transportFactory: factory, events });
             try {
                 await client.fetch("http://example.com/x", { method, body: "p" });
                 expect(seen[1]?.method).toBe("GET");
@@ -452,7 +460,7 @@ describe("client — 303 See Other body stripping", () => {
             }
             return { status: 200, statusText: "OK", body: "got" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/post", {
                 method: "POST",
@@ -480,7 +488,7 @@ describe("client — 303 See Other body stripping", () => {
             }
             return { status: 200, statusText: "OK", body: "welcome" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/login", {
                 method: "POST",
@@ -516,7 +524,7 @@ describe("client — 303 See Other body stripping", () => {
             }
             return { status: 200, statusText: "OK", body: "" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             await client.fetch("http://example.com/h", { method: "HEAD" });
             expect(seen[1]?.method).toBe("HEAD");
@@ -534,7 +542,7 @@ describe("client — close drains the pool and clears the cookie jar", () => {
             statusText: "OK",
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             // Two requests reuse the pooled connection (same origin).
             const a = await client.fetch("http://example.com/a");
@@ -566,7 +574,7 @@ describe("client — settled guard branches", () => {
         // called again — this time `settled` is already true, so the early
         // return at line 233 fires.
         const { factory, close } = installBackend(() => undefined);
-        const client = createClient({ transportFactory: factory, timeoutMs: 30 });
+        const client = createClient({ transportFactory: factory, timeoutMs: 30, events });
         try {
             await expect(client.fetch("http://example.com/slow")).rejects.toThrow(/timed out/i);
         } finally {
@@ -581,7 +589,7 @@ describe("client — settled guard branches", () => {
         // set, so finishWithError's `if (pooledRef !== undefined)` branch
         // (line 237) runs pool.teardown().
         const { factory, close } = installBackend(() => undefined);
-        const client = createClient({ transportFactory: factory, timeoutMs: 30 });
+        const client = createClient({ transportFactory: factory, timeoutMs: 30, events });
         try {
             await expect(client.fetch("http://example.com/hang")).rejects.toThrow(/timed out/i);
         } finally {
@@ -600,7 +608,7 @@ describe("client — settled guard branches", () => {
             seen.push(req.url);
             return { status: 200, statusText: "OK", body: "ok" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             // First request succeeds normally.
             const a = await client.fetch("http://example.com/a");
@@ -631,7 +639,7 @@ describe("client — redirect policy branches", () => {
             statusText: "OK",
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory, redirectPolicy: { kind: "error" } });
+        const client = createClient({ transportFactory: factory, redirectPolicy: { kind: "error" }, events });
         try {
             const resp = await client.fetch("http://example.com/");
             expect(resp.status).toBe(200);
@@ -650,7 +658,7 @@ describe("client — redirect policy branches", () => {
             statusText: "OK",
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/");
             expect(resp.status).toBe(200);
@@ -670,7 +678,7 @@ describe("client — redirect policy branches", () => {
             statusText: "Found",
             body: "no location",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/");
             expect(resp.status).toBe(302);
@@ -693,7 +701,7 @@ describe("client — redirect policy branches", () => {
             }
             return { status: 200, statusText: "OK", body: "ok" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const resp = await client.fetch("http://example.com/post", { method: "GET" });
             expect(resp.status).toBe(200);
@@ -727,7 +735,7 @@ describe("client — storeCookies domain-mismatch handling", () => {
             },
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             // Must NOT throw — the domain-mismatch is silently dropped.
             const resp = await client.fetch("http://example.com/");
@@ -753,7 +761,7 @@ describe("client — storeCookies domain-mismatch handling", () => {
             },
             body: "ok",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             await expect(client.fetch("http://example.com/")).rejects.toThrow(/malformed name=value/);
         } finally {
@@ -803,6 +811,7 @@ describe("client — branch coverage: profile, pool options, host header", () =>
             net: fakeNet,
             dns: fakeDns,
             profile: ChromeProfiles.chrome140.id,
+            events,
         });
         try {
             // Dispatching with a profile resolves getProfile(profileId) (the
@@ -824,7 +833,7 @@ describe("client — branch coverage: profile, pool options, host header", () =>
             seen.push(req);
             return { status: 200, statusText: "OK", body: "ok" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             // An explicit `host` header means buildHeaders already has one, so
             // the `if (!headers.has("host"))` branch is skipped (false branch).
@@ -847,6 +856,7 @@ describe("client — RedirectError location omitted when Location header is abse
         const client = createClient({
             transportFactory: factory,
             redirectPolicy: { kind: "error" },
+            events,
         });
         try {
             let caught: RedirectError | undefined;
@@ -872,7 +882,7 @@ describe("client — RedirectError location omitted when Location header is abse
             statusText: "Found",
             body: "",
         }));
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             let caught: RedirectError | undefined;
             try {

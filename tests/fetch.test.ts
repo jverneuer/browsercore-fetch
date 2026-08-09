@@ -8,6 +8,12 @@ import {
     ProtocolError,
     RedirectError,
 } from "../src/index.js";
+import { stubEvents } from "./helpers/test-platform.js";
+
+// The transportFactory seam bypasses the real-TCP path, so only an event
+// provider is required — fetch never provides its own EventProvider; the
+// composition root (browsersmith) is the sole source in production.
+const events = stubEvents();
 
 describe("FetchError", () => {
     it("instantiates as a FetchError and an Error", () => {
@@ -80,7 +86,7 @@ describe("fetch entrypoint — URL validation", () => {
         // parseUrl() runs before any network access, so this never touches the
         // wire. A malformed URL must surface as a FetchError (not a bare
         // TypeError from `new URL`) so callers get a uniform error type.
-        const client = createClient();
+        const client = createClient({ events });
         try {
             await expect(client.fetch(":::not-a-url:::")).rejects.toBeInstanceOf(FetchError);
         } finally {
@@ -89,7 +95,7 @@ describe("fetch entrypoint — URL validation", () => {
     });
 
     it("rejects an unsupported scheme with FetchError", async () => {
-        const client = createClient();
+        const client = createClient({ events });
         try {
             await expect(client.fetch("ftp://example.com/")).rejects.toBeInstanceOf(FetchError);
         } finally {
@@ -103,7 +109,7 @@ describe("fetch entrypoint — AbortSignal", () => {
         // The client checks `signal.aborted` before dispatching. A pre-aborted
         // signal must reject with an abort-tagged FetchError without ever
         // attempting a connection.
-        const client = createClient();
+        const client = createClient({ events });
         try {
             await expect(
                 client.fetch("https://example.com/never", { signal: AbortSignal.abort() }),
@@ -429,6 +435,7 @@ describe("fetch — behavioral", () => {
                 seen.push({ host, port });
                 return factory(host, port);
             },
+            events,
         });
         try {
             const response = await client.fetch("http://example.com:8080/where");
@@ -454,7 +461,7 @@ describe("fetch — behavioral", () => {
             }
             return { status: 200, statusText: "OK", body: "ok" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const first = await client.fetch("http://example.com/");
             expect(first.status).toBe(200);
@@ -481,7 +488,7 @@ describe("fetch — behavioral", () => {
             }
             return { status: 200, statusText: "OK", body: "final" };
         });
-        const client = createClient({ transportFactory: factory });
+        const client = createClient({ transportFactory: factory, events });
         try {
             const response = await client.fetch("http://example.com/");
             expect(response.status).toBe(200);
@@ -495,7 +502,7 @@ describe("fetch — behavioral", () => {
     it("rejects with FetchTimeoutError when the request times out", async () => {
         // Handler never replies -> the request hangs until the timeout fires.
         const { factory, close } = installFakeBackend(() => undefined);
-        const client = createClient({ transportFactory: factory, timeoutMs: 50 });
+        const client = createClient({ transportFactory: factory, timeoutMs: 50, events });
         try {
             await expect(client.fetch("http://example.com/slow")).rejects.toThrow(FetchTimeoutError);
         } finally {
@@ -507,7 +514,7 @@ describe("fetch — behavioral", () => {
     it("cancels an in-flight request when the signal aborts", async () => {
         // Handler never replies; the AbortSignal aborts the request.
         const { factory, close } = installFakeBackend(() => undefined);
-        const client = createClient({ transportFactory: factory, timeoutMs: 10_000 });
+        const client = createClient({ transportFactory: factory, timeoutMs: 10_000, events });
         try {
             const controller = new AbortController();
             const pending = client.fetch("http://example.com/hang", {

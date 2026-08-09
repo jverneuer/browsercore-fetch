@@ -10,6 +10,7 @@ import type {
 } from "@browsercore/tls";
 import { TlsError } from "@browsercore/tls";
 import { adaptTlsToTransport, TlsTransportAdapter } from "../src/tls-adapter.js";
+import { stubEvents } from "./helpers/test-platform.js";
 
 /**
  * A controllable fake {@link TlsConnection}. Tests set `.state`, queue reads,
@@ -61,7 +62,7 @@ class FakeTls extends EventEmitter implements TlsConnection {
 describe("TlsTransportAdapter — id", () => {
     it("generates its own tls_-prefixed TransportId independent of the TLS session", () => {
         const tls = new FakeTls();
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         expect(adapter.id.startsWith("tls_")).toBe(true);
         // Independent of the underlying TLS session id.
         expect(adapter.id).not.toBe(tls.id);
@@ -72,31 +73,31 @@ describe("TlsTransportAdapter — state projection", () => {
     it("projects connecting -> connecting", () => {
         const tls = new FakeTls();
         tls.setState({ state: "connecting" });
-        expect(new TlsTransportAdapter(tls).state).toEqual({ state: "connecting" });
+        expect(new TlsTransportAdapter(tls, stubEvents()).state).toEqual({ state: "connecting" });
     });
 
     it("projects handshaking -> connecting", () => {
         const tls = new FakeTls();
         tls.setState({ state: "handshaking" });
-        expect(new TlsTransportAdapter(tls).state).toEqual({ state: "connecting" });
+        expect(new TlsTransportAdapter(tls, stubEvents()).state).toEqual({ state: "connecting" });
     });
 
     it("projects open -> open", () => {
         const tls = new FakeTls();
-        expect(new TlsTransportAdapter(tls).state.state).toBe("open");
+        expect(new TlsTransportAdapter(tls, stubEvents()).state.state).toBe("open");
     });
 
     it("projects closed + close_notify -> client_close", () => {
         const tls = new FakeTls();
         tls.setState({ state: "closed", reason: { kind: "close_notify" } });
-        const st = new TlsTransportAdapter(tls).state;
+        const st = new TlsTransportAdapter(tls, stubEvents()).state;
         expect(st).toEqual({ state: "closed", reason: { kind: "client_close" } });
     });
 
     it("projects closed + transport_closed -> remote_close", () => {
         const tls = new FakeTls();
         tls.setState({ state: "closed", reason: { kind: "transport_closed" } });
-        const st = new TlsTransportAdapter(tls).state;
+        const st = new TlsTransportAdapter(tls, stubEvents()).state;
         expect(st.state).toBe("closed");
         if (st.state === "closed") expect(st.reason.kind).toBe("remote_close");
     });
@@ -104,7 +105,7 @@ describe("TlsTransportAdapter — state projection", () => {
     it("projects closed + timeout -> timeout with afterMs", () => {
         const tls = new FakeTls();
         tls.setState({ state: "closed", reason: { kind: "timeout", afterMs: 7500 } });
-        const st = new TlsTransportAdapter(tls).state;
+        const st = new TlsTransportAdapter(tls, stubEvents()).state;
         if (st.state === "closed") {
             expect(st.reason).toEqual({ kind: "timeout", afterMs: 7500 });
         }
@@ -114,7 +115,7 @@ describe("TlsTransportAdapter — state projection", () => {
         const tls = new FakeTls();
         const err = new TlsError("bad");
         tls.setState({ state: "closed", reason: { kind: "error", error: err } });
-        const st = new TlsTransportAdapter(tls).state;
+        const st = new TlsTransportAdapter(tls, stubEvents()).state;
         if (st.state === "closed") {
             expect(st.reason.kind).toBe("error");
             if (st.reason.kind === "error") expect(st.reason.error).toBe(err);
@@ -125,7 +126,7 @@ describe("TlsTransportAdapter — state projection", () => {
 describe("TlsTransportAdapter — IO forwarding", () => {
     it("write() forwards bytes to the underlying TLS connection", async () => {
         const tls = new FakeTls();
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         const data = new TextEncoder().encode("hello");
         await adapter.write(data);
         expect(tls.writes).toEqual([data]);
@@ -135,14 +136,14 @@ describe("TlsTransportAdapter — IO forwarding", () => {
         const tls = new FakeTls();
         const payload = new TextEncoder().encode("decrypted");
         tls.pushRead(payload);
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         const out = await adapter.read();
         expect(out).toEqual(payload);
     });
 
     it("close() forwards to tls.close() and ignores the reason arg", async () => {
         const tls = new FakeTls();
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         // Pass a reason — the adapter must not forward it (TLS close_notify is
         // its own concern); the call simply resolves.
         await adapter.close({ kind: "client_close" });
@@ -154,7 +155,7 @@ describe("TlsTransportAdapter — IO forwarding", () => {
 describe("TlsTransportAdapter — event forwarding", () => {
     it("forwards the TLS 'close' event as an adapter 'close' event with false", async () => {
         const tls = new FakeTls();
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         let fired = false;
         adapter.on("close", (val) => {
             fired = true;
@@ -166,7 +167,7 @@ describe("TlsTransportAdapter — event forwarding", () => {
 
     it("forwards the TLS 'error' event as an adapter 'error' event", () => {
         const tls = new FakeTls();
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         let seen: unknown;
         adapter.on("error", (err) => {
             seen = err;
@@ -180,7 +181,7 @@ describe("TlsTransportAdapter — event forwarding", () => {
 describe("adaptTlsToTransport", () => {
     it("returns a TlsTransportAdapter wrapping the connection", () => {
         const tls = new FakeTls();
-        const transport = adaptTlsToTransport(tls);
+        const transport = adaptTlsToTransport(tls, stubEvents());
         expect(transport).toBeInstanceOf(TlsTransportAdapter);
         expect(transport.state.state).toBe("open");
     });
@@ -202,7 +203,7 @@ describe("tlsToTransportState — exhaustiveness default branch", () => {
         // connecting/handshaking/open/closed, forcing the default branch.
         const tls = new FakeTls();
         tls.setState({ state: "surprise" } as never);
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         expect(() => adapter.state).toThrowError(/Unexpected value/);
     });
 });
@@ -213,7 +214,7 @@ describe("tlsCloseReasonToTransport — exhaustiveness default branch", () => {
         // of tlsCloseReasonToTransport.
         const tls = new FakeTls();
         tls.setState({ state: "closed", reason: { kind: "surprise" } } as never);
-        const adapter = new TlsTransportAdapter(tls);
+        const adapter = new TlsTransportAdapter(tls, stubEvents());
         expect(() => adapter.state).toThrowError(/Unexpected value/);
     });
 });

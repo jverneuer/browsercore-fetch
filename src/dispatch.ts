@@ -10,9 +10,8 @@
 // Connection-establishment + request dispatch composes every protocol layer.
 /* eslint-disable import/max-dependencies */
 
-import { crypto } from "@browsercore/crypto";
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
-import type { Net, DnsResolver } from "@browsercore/contracts";
+import type { CompressionProvider, CryptoProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
@@ -73,6 +72,7 @@ export async function dispatchHttp1(
     method: string,
     headers: Map<string, string>,
     body: Uint8Array | string | undefined,
+    compression: CompressionProvider | undefined,
 ): Promise<FetchResponse> {
     const wireHeaders = new Map(headers);
     if (!wireHeaders.has("host")) {
@@ -104,6 +104,8 @@ export async function dispatchHttp1(
         response.statusText,
         response.headers,
         response.body,
+        undefined,
+        compression,
     );
 }
 
@@ -114,6 +116,7 @@ export async function dispatchHttp2(
     method: string,
     headers: Map<string, string>,
     body: Uint8Array | string | undefined,
+    compression: CompressionProvider | undefined,
 ): Promise<FetchResponse> {
     const wireHeaders = new Map(headers);
     if (!wireHeaders.has(":method")) {
@@ -148,14 +151,23 @@ export async function dispatchHttp2(
         response.headers,
         response.body,
         readContentEncoding(response.headers),
+        compression,
     );
 }
 
-/** Establish a protocol connection (HTTP/1.1 or HTTP/2) over a TLS transport. */
+/**
+ * Establish a protocol connection (HTTP/1.1 or HTTP/2) over a TLS transport.
+ *
+ * `events` and `crypto` are injected — fetch never provides its own
+ * EventProvider or CryptoProvider; browsersmith (the composition root) is
+ * the sole source of both. No fallback.
+ */
 export async function establishConnection(
     transport: Transport,
     profile: BrowserProfile,
     serverName: string,
+    events: EventProvider,
+    crypto: CryptoProvider,
 ): Promise<PooledConnection> {
     const tlsConfig = profileToTlsConfig(profile, serverName);
     const tls = await connectTls({
@@ -163,17 +175,20 @@ export async function establishConnection(
         serverName,
         profile: tlsConfig,
         alpnProtocols: ALPN_PROTOCOLS,
+        events,
         crypto,
     });
     const alpn = tls.alpnProtocol;
     // Adapt the TLS connection to the Transport interface for the HTTP layer.
-    const httpTransport = adaptTlsToTransport(tls);
+    // events is always injected — fetch never provides its own EventProvider;
+    // browsersmith (the composition root) is the sole source. No fallback.
+    const httpTransport = adaptTlsToTransport(tls, events);
     if (alpn === "h2") {
         // Seed the connection preface's SETTINGS frame with the profile's
         // HTTP/2 settings so the peer observes our advertised limits
         // (window size, max frame size, header table size, …) from the start.
         const initialSettings = profileHttp2Settings(profile);
-        const conn = await connectHttp2({ transport: httpTransport, initialSettings, crypto });
+        const conn = await connectHttp2({ transport: httpTransport, initialSettings, events, crypto });
         // Settings are seeded into the connection preface via initialSettings
         // above; they cannot be mutated post-connect (see profile.ts).
         return { protocol: "http2", id: conn.id, conn };

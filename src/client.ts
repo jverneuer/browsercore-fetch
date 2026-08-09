@@ -19,7 +19,14 @@
 /* eslint-disable import/max-dependencies */
 
 import type { Transport } from "@browsercore/transport";
-import type { Net, DnsResolver, Platform } from "@browsercore/contracts";
+import type {
+    CompressionProvider,
+    CryptoProvider,
+    EventProvider,
+    Net,
+    DnsResolver,
+    Platform,
+} from "@browsercore/contracts";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
@@ -59,11 +66,18 @@ export interface FetchClientOptions {
     readonly idleTimeoutMs?: number;
     /**
      * Platform composition root. The single decoupled way to inject runtime
-     * dependencies. When provided, `net`/`dns` default to
-     * `platform.network.tcp`/`platform.network.dns` unless explicitly
-     * overridden. No protocol-to-protocol hard wires.
+     * dependencies. When provided, `net`/`dns`/`events` default to
+     * `platform.network.tcp`/`platform.network.dns`/`platform.events` unless
+     * explicitly overridden. No protocol-to-protocol hard wires.
      */
     readonly platform?: Platform;
+    /**
+     * Platform event provider. Injected from `platform` by default; set this
+     * only to override a single adapter. No fallback — fetch never provides
+     * its own EventProvider; browsersmith (the composition root) is the sole
+     * source.
+     */
+    readonly events?: EventProvider;
     /**
      * Platform-provided TCP implementation. Injected from `platform` by
      * default; set this only to override a single adapter.
@@ -74,6 +88,18 @@ export interface FetchClientOptions {
      * set this only to override a single adapter.
      */
     readonly dns?: DnsResolver;
+    /**
+     * Platform crypto provider. Injected from `platform` by default; set this
+     * only to override a single adapter. Required for the real-TCP path
+     * (TLS handshake + HTTP/2); the test seam (`transportFactory`) bypasses it.
+     */
+    readonly crypto?: CryptoProvider;
+    /**
+     * Platform compression provider. Injected from `platform` by default; set
+     * this only to override a single adapter. Used to decompress response
+     * bodies (HTTP/2 does not decompress content-encoding).
+     */
+    readonly compression?: CompressionProvider;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -218,14 +244,27 @@ function storeCookies(jar: CookieJar, headers: ReadonlyMap<string, string>, url:
 export function createClient(options?: FetchClientOptions): FetchClient {
     const id = createId("fetch") as FetchRequestId;
     const defaultJar: CookieJar = options?.cookieJar ?? createCookieJar();
-    // Resolve net/dns: explicit values win, then fall back to platform's
-    // adapters. No global singleton — the composition root (browsersmith)
-    // builds the Platform and passes it down through options.
+    // Resolve net/dns/events/crypto/compression: explicit values win, then fall
+    // back to platform's adapters. No global singleton — the composition root
+    // (browsersmith) builds the Platform and passes it down through options.
+    // No fallback for events — the composition root is the sole EventProvider
+    // source.
     const resolvedNet = options?.net ?? options?.platform?.network.tcp;
     const resolvedDns = options?.dns ?? options?.platform?.network.dns;
+    const resolvedEvents = options?.events ?? options?.platform?.events;
+    const resolvedCrypto = options?.crypto ?? options?.platform?.crypto.provider;
+    const resolvedCompression = options?.compression ?? options?.platform?.compression;
+    if (resolvedEvents === undefined) {
+        throw new Error(
+            "createClient requires an events provider. " +
+                "Pass events directly or via platform.events — " +
+                "fetch has no fallback EventProvider.",
+        );
+    }
     // Assemble pool options so absent optionals stay absent (exactOptionalPropertyTypes
     // rejects `{ idleTimeoutMs: undefined }` when the field is `idleTimeoutMs?: number`).
-    const poolOptions: PoolOptions = {};
+    // `events` is required on PoolOptions, so it is always set here.
+    const poolOptions: PoolOptions = { events: resolvedEvents };
     if (options?.idleTimeoutMs !== undefined) {
         poolOptions.idleTimeoutMs = options.idleTimeoutMs;
     }
@@ -234,6 +273,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     }
     if (resolvedDns !== undefined) {
         poolOptions.dns = resolvedDns;
+    }
+    if (resolvedCrypto !== undefined) {
+        poolOptions.crypto = resolvedCrypto;
     }
     if (options?.transportFactory !== undefined) {
         poolOptions.transportFactory = options.transportFactory;
@@ -299,10 +341,10 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                     let response: FetchResponse;
                     switch (pooled.protocol) {
                         case "http1":
-                            response = await dispatchHttp1(pooled.conn, url, method, headers, opts?.body);
+                            response = await dispatchHttp1(pooled.conn, url, method, headers, opts?.body, resolvedCompression);
                             break;
                         case "http2":
-                            response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body);
+                            response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body, resolvedCompression);
                             break;
                         /* istanbul ignore next: unreachable — pooled.protocol is "http1" | "http2" */
                         default:

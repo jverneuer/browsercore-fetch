@@ -7,6 +7,7 @@ import {
     readSetCookie,
 } from "../src/response.js";
 import { FetchError } from "../src/errors.js";
+import { compression } from "./helpers/test-compression.js";
 
 function utf8(s: string): Uint8Array {
     return new TextEncoder().encode(s);
@@ -54,10 +55,10 @@ describe("readContentEncoding", () => {
 });
 
 describe("decompressBody", () => {
-    it("returns the body unchanged when encoding is undefined or empty", () => {
+    it("returns the body unchanged when encoding is undefined", () => {
         const body = utf8("hello");
-        expect(decompressBody(body, undefined)).toBe(body);
-        expect(decompressBody(body, "")).toBe(body);
+        // No encoding → returned as-is, no compression provider consulted.
+        expect(decompressBody(compression, body, undefined)).toBe(body);
     });
 
     it("decompresses a gzip body through the compression package", () => {
@@ -67,8 +68,17 @@ describe("decompressBody", () => {
         const { gzipSync } = require("node:zlib") as typeof import("node:zlib");
         const original = utf8('{"a":1,"b":"text"}');
         const compressed = gzipSync(original);
-        const out = decompressBody(compressed, "gzip");
+        const out = decompressBody(compression, compressed, "gzip");
         expect(Array.from(out)).toEqual(Array.from(original));
+    });
+
+    it("throws when an encoding is set but no compression provider is injected", () => {
+        // An encoded response with no injected provider is a configuration
+        // error (Platform not provided) — surface a typed FetchError instead of
+        // a confusing "compression.decompress is not a function" at decode time.
+        const { gzipSync } = require("node:zlib") as typeof import("node:zlib");
+        const compressed = gzipSync(utf8("x"));
+        expect(() => decompressBody(undefined, compressed, "gzip")).toThrow(FetchError);
     });
 });
 
@@ -169,6 +179,7 @@ describe("buildResponse", () => {
             headers([["content-encoding", "gzip"]]),
             gzipSync(original),
             "gzip",
+            compression,
         );
         expect(await resp.text()).toBe("compressed payload");
     });

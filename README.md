@@ -14,17 +14,49 @@ URL parsing, connection reuse, profile loading, redirect policy, cookie
 integration, and automatic protocol selection (h2 vs h1.1 via ALPN). Top of the
 dependency stack — every other `@browsercore/*` package sits below this one.
 
+## Runtime dependencies via Platform
+
+fetch has no runtime bindings of its own. Every capability it needs at
+runtime — events, TCP, DNS, crypto, compression — is injected through a single
+[`Platform`](https://github.com/jverneuer/browsercore-contracts) object that
+`browsersmith` (the composition root) assembles and passes down:
+
+```ts
+import { fetch } from "@browsercore/fetch";
+import { browsersmith } from "browsersmith";
+
+// browsersmith builds the Platform; fetch consumes it. No global singletons,
+// no fallback providers — fetch throws if a required capability is missing.
+const platform = browsersmith.createPlatform();
+const response = await fetch("https://example.com", { profile: "chrome-140" }, platform);
+```
+
+`createClient` resolves each capability from `platform`, falling back to an
+explicit individual option when one is provided (useful to override a single
+adapter):
+
+| Capability | Platform field | Individual fallback |
+| --- | --- | --- |
+| events | `platform.events` | `options.events` |
+| TCP | `platform.network.tcp` | `options.net` |
+| DNS | `platform.network.dns` | `options.dns` |
+| crypto | `platform.crypto.provider` | `options.crypto` |
+| compression | `platform.compression` | `options.compression` |
+
+`events` is mandatory with no fallback — fetch never creates its own provider.
+
 ## Public API
 
 ```ts
 import { fetch, createClient, FetchTimeoutError } from "@browsercore/fetch";
 
-// One-shot convenience fetch (creates + closes a default client):
-const response = await fetch("https://example.com", { profile: "chrome-140" });
+// One-shot convenience fetch (creates + closes a default client).
+// Requires a Platform — see "Runtime dependencies via Platform" above.
+const response = await fetch("https://example.com", { profile: "chrome-140" }, platform);
 console.log(response.status, await response.text());
 
 // Reusable client for connection pooling + defaults:
-const client = createClient({ profile: "chrome-140" });
+const client = createClient({ profile: "chrome-140", platform });
 try {
     const r1 = await client.fetch("https://example.com");
     const r2 = await client.fetch("https://example.com/api", { method: "POST" });
@@ -40,7 +72,7 @@ try {
 | `fetch()` | function | Top-level convenience — creates a default client |
 | `createClient()` | function | Build a reusable client with defaults |
 | `FetchClient` | interface | Reusable client (fetch + close) |
-| `FetchClientOptions` | interface | Client defaults (cookie jar, profile, timeout, net/dns adapters) |
+| `FetchClientOptions` | interface | Client defaults (cookie jar, profile, timeout, Platform) |
 | `FetchOptions` | interface | Per-request options (method, headers, body, profile, signal, …) |
 | `FetchResponse` | interface | Response (status, headers, body()/json()/text(), clone()) |
 | `FetchMethod` | type union | `GET \| POST \| PUT \| PATCH \| DELETE \| HEAD \| OPTIONS` |

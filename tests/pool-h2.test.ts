@@ -224,7 +224,10 @@ describe("pool — production path (real net/dns)", () => {
 
         const net = { connect: vi.fn() } as never;
         const dns = { resolve: vi.fn() } as never;
-        const pool = createPool({ net, dns }, lookup, fallbackProfile());
+        // crypto is required for the real-TCP path (TLS handshake); the lower
+        // layers are mocked here, so a stub provider suffices.
+        const crypto = { randomBytes: vi.fn() } as never;
+        const pool = createPool({ net, dns, crypto }, lookup, fallbackProfile());
         try {
             const conn = await pool.getConnection(url("http://example.com/"), undefined);
             expect(conn.protocol).toBe("http1");

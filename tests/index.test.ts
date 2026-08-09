@@ -6,6 +6,12 @@ import {
     RedirectError,
     assertNever,
 } from "../src/index.js";
+import { createTestPlatform } from "./helpers/test-platform.js";
+
+// The top-level `fetch()` convenience requires a Platform (its createClient
+// throws without an injected EventProvider). fetch never provides its own;
+// browsersmith is the composition root that supplies it in production.
+const platform = createTestPlatform();
 
 /**
  * The top-level `fetch()` convenience (src/index.ts) builds a one-shot client,
@@ -37,11 +43,11 @@ describe("fetch convenience — function body", () => {
     it("rejects an invalid URL with FetchError and runs the finally close", async () => {
         // parseUrl throws before any network access; the one-shot client is
         // still created and closed in the finally. This covers the full body.
-        await expect(fetch(":::not-a-url:::")).rejects.toBeInstanceOf(FetchError);
+        await expect(fetch(":::not-a-url:::", undefined, platform)).rejects.toBeInstanceOf(FetchError);
     });
 
     it("rejects an unsupported scheme with FetchError", async () => {
-        await expect(fetch("ftp://example.com/")).rejects.toBeInstanceOf(FetchError);
+        await expect(fetch("ftp://example.com/", undefined, platform)).rejects.toBeInstanceOf(FetchError);
     });
 
     it("assembles defaults only from present options (no undefined keys)", async () => {
@@ -50,19 +56,23 @@ describe("fetch convenience — function body", () => {
         // conditional assignment branch. The request still fails at parseUrl.
         const { createCookieJar } = await import("@browsercore/cookies");
         await expect(
-            fetch(":::bad:::", {
-                profile: "chrome-140" as never,
-                timeoutMs: 10,
-                cookieJar: createCookieJar(),
-            }),
+            fetch(
+                ":::bad:::",
+                {
+                    profile: "chrome-140" as never,
+                    timeoutMs: 10,
+                    cookieJar: createCookieJar(),
+                },
+                platform,
+            ),
         ).rejects.toBeInstanceOf(FetchError);
         // Omitting all optional fields exercises the no-assignment path.
-        await expect(fetch(":::bad:::")).rejects.toBeInstanceOf(FetchError);
+        await expect(fetch(":::bad:::", undefined, platform)).rejects.toBeInstanceOf(FetchError);
     });
 
     it("does not wait for the timeout when parseUrl fails first", async () => {
         const start = Date.now();
-        await expect(fetch(":::bad:::", { timeoutMs: 1000 })).rejects.toBeInstanceOf(FetchError);
+        await expect(fetch(":::bad:::", { timeoutMs: 1000 }, platform)).rejects.toBeInstanceOf(FetchError);
         expect(Date.now() - start).toBeLessThan(500);
     });
 });

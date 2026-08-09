@@ -24,6 +24,15 @@ import type { ParsedUrl } from "../src/types.js";
 import type { TlsConnection } from "@browsercore/tls";
 import type { Transport } from "@browsercore/transport";
 import type { BrowserProfile } from "@browsercore/profiles";
+import { compression } from "./helpers/test-compression.js";
+import { crypto as testCrypto } from "@browsercore/crypto";
+import { stubEvents } from "./helpers/test-platform.js";
+
+// Crypto provider for tests that exercise establishConnection directly. The
+// real @browsercore/crypto singleton — the lower layers (connectTls/connectHttp2)
+// are mocked here, so it is never invoked; production code receives it via
+// Platform only.
+const crypto = testCrypto;
 
 // ---------------------------------------------------------------------------
 // Top-level mocks for the lower-level @browsercore/* packages. These let us
@@ -291,7 +300,7 @@ describe("dispatchHttp1 — response building", () => {
             headers: new Map([["content-encoding", "gzip"]]),
             body: gzipSync(original),
         }));
-        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, compression);
         expect(await resp.text()).toBe("h2-still-compressed");
     });
 
@@ -404,7 +413,7 @@ describe("dispatchHttp2 — response building", () => {
             headers: new Map([["content-encoding", "gzip"]]),
             body: gzipSync(original),
         }));
-        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, compression);
         expect(await resp.text()).toBe("h2 compressed");
     });
 
@@ -478,7 +487,13 @@ describe("establishConnection — ALPN dispatch", () => {
         mockConnectTls.mockResolvedValue(fakeTlsConn("h2"));
         mockConnectHttp2.mockResolvedValue({ id: "h2-1", settings: {} });
 
-        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        const result = await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+        );
         expect(result.protocol).toBe("http2");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
@@ -492,7 +507,13 @@ describe("establishConnection — ALPN dispatch", () => {
         mockConnectTls.mockResolvedValue(fakeTlsConn("http/1.1"));
         mockConnectHttp1.mockResolvedValue({ id: "h1-1" });
 
-        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        const result = await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+        );
         expect(result.protocol).toBe("http1");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
@@ -506,7 +527,13 @@ describe("establishConnection — ALPN dispatch", () => {
         mockConnectTls.mockResolvedValue(fakeTlsConn(undefined));
         mockConnectHttp1.mockResolvedValue({ id: "h1-2" });
 
-        const result = await establishConnection({ id: "t" } as Transport, fakeProfile(), "example.com");
+        const result = await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+        );
         expect(result.protocol).toBe("http1");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);

@@ -26,6 +26,12 @@ vi.mock("../src/pool.js", () => ({
 // Import AFTER the mock is registered.
 // eslint-disable-next-line import/first
 import { createClient } from "../src/client.js";
+import { createTestPlatform } from "./helpers/test-platform.js";
+
+// createClient requires an injected Platform (its pool throws without an
+// EventProvider). fetch never provides its own; browsersmith is the sole
+// source in production. The pool is mocked here, but the guard still runs.
+const platform = createTestPlatform();
 
 describe("client — http2 dispatch path", () => {
     it("dispatches over an http2 pooled connection and stores Set-Cookie", async () => {
@@ -54,7 +60,7 @@ describe("client — http2 dispatch path", () => {
         fakePool.release.mockReset();
         fakePool.drain.mockReset().mockResolvedValue(undefined);
 
-        const client = createClient();
+        const client = createClient({ platform });
         try {
             const resp = await client.fetch("https://example.com/h2");
             expect(resp.status).toBe(200);
@@ -94,7 +100,7 @@ describe("client — http2 dispatch path", () => {
         fakePool.release.mockReset();
         fakePool.drain.mockReset().mockResolvedValue(undefined);
 
-        const client = createClient();
+        const client = createClient({ platform });
         try {
             const resp = await client.fetch("https://example.com/api");
             expect(resp.status).toBe(201);
