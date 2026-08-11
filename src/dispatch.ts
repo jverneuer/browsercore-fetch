@@ -198,9 +198,10 @@ export async function establishConnection(
     });
     const alpn = tls.alpnProtocol;
     // Adapt the TLS connection to the Transport interface for the HTTP layer.
-    // events is always injected — fetch never provides its own EventProvider;
-    // browsersmith (the composition root) is the sole source. No fallback.
-    const httpTransport = adaptTlsToTransport(tls, events);
+    // The adapter owns a private event bus, so no EventProvider is threaded
+    // through here — close/error forwarded from the TLS connection land on the
+    // adapter's private emitter, never the shared injected bus.
+    const httpTransport = adaptTlsToTransport(tls);
     if (alpn === "h2") {
         // Seed the connection preface with the profile's full HTTP/2
         // configuration: SETTINGS values plus the impersonation vectors
