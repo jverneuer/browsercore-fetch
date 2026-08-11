@@ -104,8 +104,6 @@ const fakeProfile = (): BrowserProfile =>
             maxFrameSize: 16384,
             headerTableSize: 65536,
             weight: 256,
-            // Impersonation vectors (Wave 0/1) — absent from the installed
-            // profiles type, so the whole object is widened via `as`.
             settingsOrder: [1, 2, 4, 6],
             grease: true,
             connectionWindowUpdate: 15663105,

@@ -11,10 +11,12 @@
 /* eslint-disable import/max-dependencies */
 
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
-import type { CompressionProvider, CryptoProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
+import type { CompressionProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
+import type { CryptoProvider } from "@browsercore/crypto";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
+    type HeaderCasing,
     type Http1Connection,
     type Http1ConnectionId,
     type HttpMethod,
@@ -27,8 +29,6 @@ import {
     ALPN_PROTOCOLS,
     profileHttp2Config,
     profileToTlsConfig,
-    type HeaderCasing,
-    type ProfileHttp2Config,
 } from "./profile.js";
 import { adaptTlsToTransport } from "./tls-adapter.js";
 import { bodyKind, buildResponse, readContentEncoding } from "./response.js";
@@ -45,30 +45,6 @@ const FETCH_METHODS: ReadonlySet<string> = new Set([
     "HEAD",
     "OPTIONS",
 ]);
-
-/**
- * Extended {@link Http2Options} carrying the impersonation fields the installed
- * @browsercore/http2 does not declare yet. A value of this wider type is still
- * assignable to `Http2Options`, so it flows into `connectHttp2` unchanged —
- * the installed layer ignores the extra keys today and consumes them once the
- * dep is bumped. TODO: remove once @browsercore/http2 publishes the fields.
- */
-type Http2ConnectOptions = Http2Options & {
-    readonly settingsOrder?: readonly number[];
-    readonly settingsGrease?: boolean;
-    readonly connectionWindowUpdate?: number;
-    readonly priorityFrames?: ProfileHttp2Config["priorityFrames"];
-    readonly pseudoHeaderOrder?: readonly string[];
-};
-
-/**
- * {@link HttpRequest} carrying the impersonation `headerCasing` field the
- * installed @browsercore/http1 does not declare yet. TODO: remove once
- * @browsercore/http1 publishes `headerCasing` on HttpRequest.
- */
-type HttpRequestWithCasing = HttpRequest & {
-    readonly headerCasing?: HeaderCasing;
-};
 
 /** Validate a method string and narrow it to the http1 wire {@link HttpMethod}. */
 function asHttpMethod(method: string): HttpMethod {
@@ -129,7 +105,7 @@ export async function dispatchHttp1(
     // Build the request with the impersonation casing threaded through. The
     // conditional spread keeps `headerCasing` absent (not `undefined`) when no
     // mode is supplied — required under exactOptionalPropertyTypes.
-    const request: HttpRequestWithCasing = {
+    const request: HttpRequest = {
         method: asHttpMethod(method),
         url: requestTarget(url),
         headers: wireHeaders,
@@ -232,7 +208,7 @@ export async function establishConnection(
         // order, preface PRIORITY frames). The peer observes our advertised
         // limits AND our fingerprint shape from the first bytes.
         const h2config = profileHttp2Config(profile);
-        const h2options: Http2ConnectOptions = {
+        const h2options: Http2Options = {
             transport: httpTransport,
             initialSettings: h2config.settings,
             settingsOrder: h2config.settingsOrder,

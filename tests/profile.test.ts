@@ -241,9 +241,6 @@ describe("profileHttp2Config", () => {
     });
 
     it("propagates every explicit impersonation field from a Chrome-like profile", () => {
-        // The installed profiles package does not declare these fields yet, so
-        // we build a Chrome-shaped profile through a widening cast. This is the
-        // shape the published profiles will expose once Wave 0 lands.
         const chromeLike = {
             ...makeProfile(),
             name: "chrome",
@@ -269,21 +266,12 @@ describe("profileHttp2Config", () => {
         expect(config.settings[Http2Settings.MAX_CONCURRENT_STREAMS]).toBe(128);
     });
 
-    it("propagates explicit preface PRIORITY frames when present", () => {
-        const withPriority = {
-            ...makeProfile(),
-            http2: {
-                ...makeProfile().http2,
-                priorityFrames: [
-                    { streamId: 0, streamDependency: 0, exclusive: false, weight: 256 },
-                    { streamId: 3, streamDependency: 0, exclusive: false, weight: 41 },
-                ],
-            },
-        } as unknown as BrowserProfile;
-        expect(profileHttp2Config(withPriority).priorityFrames).toEqual([
-            { streamId: 0, streamDependency: 0, exclusive: false, weight: 256 },
-            { streamId: 3, streamDependency: 0, exclusive: false, weight: 41 },
-        ]);
+    it("defaults priorityFrames to an empty array (profiles do not declare them)", () => {
+        // priorityFrames is not a profile field — it is an Http2Options field
+        // that the fetch layer could set independently. The profile-driven
+        // config always yields [] until a future profiles version declares it.
+        const config = profileHttp2Config(makeProfile());
+        expect(config.priorityFrames).toEqual([]);
     });
 });
 
@@ -309,13 +297,12 @@ describe("profileHttp1Config", () => {
         expect(config.headerCasing).toBe("lowercase");
     });
 
-    it("lets an explicit profile headerCasing win over the name-derived default", () => {
-        const profile = {
-            ...makeProfile(),
-            name: "chrome",
-            http1: { ...makeProfile().http1, headerCasing: "original" },
-        } as unknown as BrowserProfile;
-        expect(profileHttp1Config(profile).headerCasing).toBe("original");
+    it("always derives headerCasing from the browser name (chrome → title)", () => {
+        // headerCasing is not a profile field — it is derived from the browser
+        // family (chromium → title, others → lowercase). The http1 package's
+        // HttpRequest carries the resolved casing to the wire serializer.
+        const config = profileHttp1Config({ ...makeProfile(), name: "chrome" } as BrowserProfile);
+        expect(config.headerCasing).toBe("title");
     });
 
     it("exposes the profile default headers and header order", () => {

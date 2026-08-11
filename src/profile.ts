@@ -20,67 +20,10 @@ import {
     type ProtocolVersion,
     type SignatureScheme,
 } from "@browsercore/tls";
-import { Http2Settings, type Http2SettingsMap } from "@browsercore/http2";
+import { Http2Settings, type Http2SettingsMap, type PriorityFrameSpec } from "@browsercore/http2";
+import type { HeaderCasing } from "@browsercore/http1";
 import type { BrowserProfile } from "@browsercore/profiles";
 import { FetchError } from "./errors.js";
-
-// ---------------------------------------------------------------------------
-// Impersonation field shims (TODO: remove once upstream deps publish)
-// ---------------------------------------------------------------------------
-//
-// Wave 0 added impersonation fields to @browsercore/profiles (`settingsOrder`,
-// `grease`, `connectionWindowUpdate`, `pseudoHeaderOrder` on Http2Profile) and
-// Wave 1 added matching option fields to @browsercore/http2 (`settingsOrder`,
-// `settingsGrease`, `connectionWindowUpdate`, `priorityFrames`,
-// `pseudoHeaderOrder`) and @browsercore/http1 (`headerCasing` on HttpRequest).
-// Those feature branches are NOT yet published to npm, so the installed
-// packages do not declare the fields. These local interfaces mirror the future
-// shapes so fetch can READ the profile values and PASS them to the protocol
-// layers now; once the deps are bumped, delete each shim and read/write
-// directly off the package types.
-
-/**
- * How header field names are cased when serialized to the HTTP/1.1 wire.
- * Mirrors the `HeaderCasing` type the http1 package will export once published.
- */
-export type HeaderCasing = "lowercase" | "title" | "original";
-
-/**
- * Specification for a PRIORITY frame sent during the HTTP/2 connection
- * preface. Mirrors the `PriorityFrameSpec` type the http2 package will export
- * once published. Plain `number` ids suffice for the profile-driven shim — the
- * branded `Http2StreamId` lives in the http2 package.
- */
-export interface PriorityFrameSpec {
-    readonly streamId: number;
-    readonly streamDependency: number;
-    readonly exclusive: boolean;
-    readonly weight: number;
-}
-
-/**
- * The impersonation fields Wave 0 added to the profiles `Http2Profile`. The
- * installed @browsercore/profiles (0.2.0) does not declare them yet. Because
- * every field here is optional, an installed `Http2Profile` is structurally
- * assignable to this interface — so a profile's `http2` sub-object can be read
- * through it with NO cast: present fields surface, absent ones are `undefined`
- * and the caller applies an RFC/browser default.
- */
-interface Http2ProfileImpersonation {
-    readonly settingsOrder?: readonly number[];
-    readonly grease?: boolean;
-    readonly connectionWindowUpdate?: number;
-    readonly pseudoHeaderOrder?: readonly string[];
-    readonly priorityFrames?: readonly PriorityFrameSpec[];
-}
-
-/**
- * The impersonation `headerCasing` field Wave 0 will add to the profiles
- * `Http1Profile`. Same structural-read trick as {@link Http2ProfileImpersonation}.
- */
-interface Http1ProfileImpersonation {
-    readonly headerCasing?: HeaderCasing;
-}
 
 /** RFC 9113 §6.5.2 SETTINGS id order assumed when a profile omits settingsOrder. */
 const DEFAULT_SETTINGS_ORDER: readonly number[] = [1, 2, 4, 6];
@@ -299,9 +242,7 @@ export function profileHttp2Settings(profile: BrowserProfile): Http2SettingsMap 
  * the SETTINGS values PLUS the impersonation vectors (SETTINGS serialization
  * order, GREASE, connection WINDOW_UPDATE, pseudo-header order, preface
  * PRIORITY frames). Each impersonation field defaults to an RFC/safe value
- * when the profile omits it — the installed @browsercore/profiles does not
- * declare these fields yet, so they are read defensively through the
- * {@link Http2ProfileImpersonation} shim.
+ * when the profile omits it.
  */
 export interface ProfileHttp2Config {
     /** Resolved SETTINGS id → value map (seeded into the connection preface). */
@@ -325,18 +266,15 @@ export interface ProfileHttp2Config {
  * from the profile (absent → undefined → RFC/browser default).
  */
 export function profileHttp2Config(profile: BrowserProfile): ProfileHttp2Config {
-    // The installed Http2Profile does not declare the impersonation fields, but
-    // the runtime object (from a newer profiles build) may carry them. Widen the
-    // type to the intersection so the optional fields are readable; the cast is
-    // sound because the target intersection is assignable to the source type.
-    const h2 = profile.http2 as BrowserProfile["http2"] & Http2ProfileImpersonation;
+    // Impersonation fields are now declared on Http2Profile directly. Each
+    // is optional; absent → RFC/browser default.
     return {
         settings: profileHttp2Settings(profile),
-        settingsOrder: h2.settingsOrder ?? DEFAULT_SETTINGS_ORDER,
-        grease: h2.grease ?? false,
-        connectionWindowUpdate: h2.connectionWindowUpdate ?? 0,
-        pseudoHeaderOrder: h2.pseudoHeaderOrder ?? DEFAULT_PSEUDO_HEADER_ORDER,
-        priorityFrames: h2.priorityFrames ?? [],
+        settingsOrder: profile.http2.settingsOrder ?? DEFAULT_SETTINGS_ORDER,
+        grease: profile.http2.grease ?? false,
+        connectionWindowUpdate: profile.http2.connectionWindowUpdate ?? 0,
+        pseudoHeaderOrder: profile.http2.pseudoHeaderOrder ?? DEFAULT_PSEUDO_HEADER_ORDER,
+        priorityFrames: [],
     };
 }
 
@@ -359,14 +297,14 @@ export interface ProfileHttp1Config {
  *
  * Chromium-based browsers (Chrome, Edge) emit Title-Cased header names
  * (`Accept`, `User-Agent`, `Sec-CH-UA`) over HTTP/1.1; the default for other
- * profiles is lowercase (RFC 7230 §3.2 convention), preserving backward
- * compatibility. An explicit `headerCasing` on the profile always wins.
+ * profiles is lowercase (RFC 7230 §3.2 convention).
  */
 export function profileHttp1Config(profile: BrowserProfile): ProfileHttp1Config {
-    const h1 = profile.http1 as BrowserProfile["http1"] & Http1ProfileImpersonation;
+    // Chromium-based browsers (Chrome, Edge) emit Title-Cased header names
+    // (`Accept`, `User-Agent`, `Sec-CH-UA`) over HTTP/1.1; the default for
+    // other profiles is lowercase (RFC 7230 §3.2 convention).
     const headerCasing =
-        h1.headerCasing ??
-        (TITLE_CASED_BROWSERS.has(profile.name.toLowerCase()) ? "title" : "lowercase");
+        TITLE_CASED_BROWSERS.has(profile.name.toLowerCase()) ? "title" : "lowercase";
     return {
         headerCasing,
         defaultHeaders: profile.http1.defaultHeaders,
