@@ -32,7 +32,7 @@ import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/pr
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
 import { createPool, type ConnectionPool, type PoolOptions } from "./pool.js";
-import { applyHttp1Profile } from "./profile.js";
+import { applyHttp1Profile, profileHttp1Config } from "./profile.js";
 import { METHODS_PRESERVED_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
 import { readSetCookie } from "./response.js";
 import { assertNever, createId } from "./utils.js";
@@ -340,9 +340,25 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                     pooledRef = pooled;
                     let response: FetchResponse;
                     switch (pooled.protocol) {
-                        case "http1":
-                            response = await dispatchHttp1(pooled.conn, url, method, headers, opts?.body, resolvedCompression);
+                        case "http1": {
+                            // Thread the profile's header-casing mode through to
+                            // the HTTP/1.1 serializer so impersonated browsers
+                            // emit Title-Cased field names on the wire.
+                            const headerCasing =
+                                profile === undefined
+                                    ? undefined
+                                    : profileHttp1Config(profile).headerCasing;
+                            response = await dispatchHttp1(
+                                pooled.conn,
+                                url,
+                                method,
+                                headers,
+                                opts?.body,
+                                resolvedCompression,
+                                headerCasing,
+                            );
                             break;
+                        }
                         case "http2":
                             response = await dispatchHttp2(pooled.conn, url, method, headers, opts?.body, resolvedCompression);
                             break;

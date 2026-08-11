@@ -78,39 +78,46 @@ vi.mock("@browsercore/transport", async (importOriginal) => {
     };
 });
 
-const fakeProfile = (): BrowserProfile => ({
-    id: "chrome" as const,
-    name: "Chrome",
-    version: "140.0.0",
-    tls: {
-        cipherSuites: ["TLS_AES_128_GCM_SHA256"],
-        extensionOrder: [0, 10, 11, 13, 16, 23, 27, 35, 43, 45, 51, 65281],
-        supportedVersions: ["TLS 1.3"],
-        keyShareGroups: ["x25519"],
-        signatureAlgorithms: ["ecdsa_secp256r1_sha256"],
-        grease: false,
-    },
-    http2: {
-        settings: {
-            headerTableSize: 65536,
-            enablePush: false,
-            maxConcurrentStreams: 100,
+const fakeProfile = (): BrowserProfile =>
+    ({
+        id: "chrome" as const,
+        name: "chrome",
+        version: "140.0.0",
+        tls: {
+            cipherSuites: ["TLS_AES_128_GCM_SHA256"],
+            extensionOrder: [0, 10, 11, 13, 16, 23, 27, 35, 43, 45, 51, 65281],
+            supportedVersions: ["TLS 1.3"],
+            keyShareGroups: ["x25519"],
+            signatureAlgorithms: ["ecdsa_secp256r1_sha256"],
+            grease: false,
+        },
+        http2: {
+            settings: {
+                headerTableSize: 65536,
+                enablePush: false,
+                maxConcurrentStreams: 100,
+                initialWindowSize: 6291456,
+                maxFrameSize: 16384,
+                maxHeaderListSize: 65536,
+            },
             initialWindowSize: 6291456,
             maxFrameSize: 16384,
-            maxHeaderListSize: 65536,
+            headerTableSize: 65536,
+            weight: 256,
+            // Impersonation vectors (Wave 0/1) — absent from the installed
+            // profiles type, so the whole object is widened via `as`.
+            settingsOrder: [1, 2, 4, 6],
+            grease: true,
+            connectionWindowUpdate: 15663105,
+            pseudoHeaderOrder: ["method", "authority", "scheme", "path"],
         },
-        initialWindowSize: 6291456,
-        maxFrameSize: 16384,
-        headerTableSize: 65536,
-        weight: 256,
-    },
-    http1: {
-        defaultHeaders: { "user-agent": "test" },
-        headerOrder: [],
-        connection: "keep-alive",
-        acceptEncoding: "gzip, deflate, br",
-    },
-});
+        http1: {
+            defaultHeaders: { "user-agent": "test" },
+            headerOrder: [],
+            connection: "keep-alive",
+            acceptEncoding: "gzip, deflate, br",
+        },
+    }) as BrowserProfile;
 
 function fakeTlsConn(alpnProtocol: string | undefined): TlsConnection {
     const { EventEmitter } = require("node:events") as typeof import("node:events");
@@ -247,6 +254,20 @@ describe("dispatchHttp1 — request target", () => {
         const conn = fakeHttp1(() => okResponse());
         await dispatchHttp1(conn, url("https://e.com/a/b?x=1"), "GET", new Map(), undefined);
         expect(conn.requests[0]?.url).toBe("/a/b?x=1");
+    });
+});
+
+describe("dispatchHttp1 — header casing", () => {
+    it("forwards the headerCasing mode onto the HttpRequest", async () => {
+        const conn = fakeHttp1(() => okResponse());
+        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined, "title");
+        expect((conn.requests[0] as { headerCasing?: string }).headerCasing).toBe("title");
+    });
+
+    it("omits headerCasing when none is supplied (http1 applies its own default)", async () => {
+        const conn = fakeHttp1(() => okResponse());
+        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        expect((conn.requests[0] as { headerCasing?: string }).headerCasing).toBeUndefined();
     });
 });
 
@@ -538,6 +559,32 @@ describe("establishConnection — ALPN dispatch", () => {
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp2).not.toHaveBeenCalled();
+    });
+
+    it("passes the profile impersonation config (settingsOrder, grease, window update, pseudo-header order) to connectHttp2", async () => {
+        mockConnectTls.mockReset();
+        mockConnectHttp2.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("h2"));
+        mockConnectHttp2.mockResolvedValue({ id: "h2-imp", settings: {} });
+
+        await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+        );
+
+        expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
+        const opts = mockConnectHttp2.mock.calls[0]![0] as Record<string, unknown>;
+        // SETTINGS values are seeded from the profile.
+        expect(opts.initialSettings).toBeDefined();
+        // Impersonation vectors flow through end-to-end.
+        expect(opts.settingsOrder).toEqual([1, 2, 4, 6]);
+        expect(opts.settingsGrease).toBe(true);
+        expect(opts.connectionWindowUpdate).toBe(15663105);
+        expect(opts.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
+        expect(opts.priorityFrames).toEqual([]);
     });
 });
 

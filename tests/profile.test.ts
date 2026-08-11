@@ -9,6 +9,8 @@ import {
 import {
     ALPN_PROTOCOLS,
     applyHttp1Profile,
+    profileHttp1Config,
+    profileHttp2Config,
     profileHttp2Settings,
     profileToTlsConfig,
 } from "../src/profile.js";
@@ -224,6 +226,103 @@ describe("applyHttp1Profile", () => {
         applyHttp1Profile(headers, profile);
         expect(headers.get("x")).toBe("y");
         expect(headers.size).toBe(1);
+    });
+});
+
+describe("profileHttp2Config", () => {
+    it("returns RFC/browser defaults when the profile omits impersonation fields", () => {
+        const config = profileHttp2Config(makeProfile());
+        expect(config.settings).toEqual(profileHttp2Settings(makeProfile()));
+        expect(config.settingsOrder).toEqual([1, 2, 4, 6]);
+        expect(config.grease).toBe(false);
+        expect(config.connectionWindowUpdate).toBe(0);
+        expect(config.pseudoHeaderOrder).toEqual(["method", "scheme", "authority", "path"]);
+        expect(config.priorityFrames).toEqual([]);
+    });
+
+    it("propagates every explicit impersonation field from a Chrome-like profile", () => {
+        // The installed profiles package does not declare these fields yet, so
+        // we build a Chrome-shaped profile through a widening cast. This is the
+        // shape the published profiles will expose once Wave 0 lands.
+        const chromeLike = {
+            ...makeProfile(),
+            name: "chrome",
+            http2: {
+                ...makeProfile().http2,
+                settingsOrder: [1, 2, 4, 6],
+                grease: true,
+                connectionWindowUpdate: 15663105,
+                pseudoHeaderOrder: ["method", "authority", "scheme", "path"],
+            },
+        } as unknown as BrowserProfile;
+        const config = profileHttp2Config(chromeLike);
+        expect(config.settingsOrder).toEqual([1, 2, 4, 6]);
+        expect(config.grease).toBe(true);
+        expect(config.connectionWindowUpdate).toBe(15663105);
+        expect(config.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
+    });
+
+    it("includes the resolved SETTINGS map (re-uses profileHttp2Settings)", () => {
+        const config = profileHttp2Config(makeProfile());
+        expect(config.settings[Http2Settings.HEADER_TABLE_SIZE]).toBe(4096);
+        expect(config.settings[Http2Settings.ENABLE_PUSH]).toBe(1);
+        expect(config.settings[Http2Settings.MAX_CONCURRENT_STREAMS]).toBe(128);
+    });
+
+    it("propagates explicit preface PRIORITY frames when present", () => {
+        const withPriority = {
+            ...makeProfile(),
+            http2: {
+                ...makeProfile().http2,
+                priorityFrames: [
+                    { streamId: 0, streamDependency: 0, exclusive: false, weight: 256 },
+                    { streamId: 3, streamDependency: 0, exclusive: false, weight: 41 },
+                ],
+            },
+        } as unknown as BrowserProfile;
+        expect(profileHttp2Config(withPriority).priorityFrames).toEqual([
+            { streamId: 0, streamDependency: 0, exclusive: false, weight: 256 },
+            { streamId: 3, streamDependency: 0, exclusive: false, weight: 41 },
+        ]);
+    });
+});
+
+describe("profileHttp1Config", () => {
+    it("defaults to title casing for a chromium-based profile (chrome)", () => {
+        const config = profileHttp1Config({ ...makeProfile(), name: "chrome" } as BrowserProfile);
+        expect(config.headerCasing).toBe("title");
+    });
+
+    it("defaults to title casing for edge", () => {
+        const config = profileHttp1Config({ ...makeProfile(), name: "edge" } as BrowserProfile);
+        expect(config.headerCasing).toBe("title");
+    });
+
+    it("matches chromium browsers case-insensitively", () => {
+        // Shipped profiles use lowercase names, but be robust to capitalization.
+        const config = profileHttp1Config({ ...makeProfile(), name: "Chrome" } as BrowserProfile);
+        expect(config.headerCasing).toBe("title");
+    });
+
+    it("defaults to lowercase for a non-chromium profile", () => {
+        const config = profileHttp1Config({ ...makeProfile(), name: "firefox" } as BrowserProfile);
+        expect(config.headerCasing).toBe("lowercase");
+    });
+
+    it("lets an explicit profile headerCasing win over the name-derived default", () => {
+        const profile = {
+            ...makeProfile(),
+            name: "chrome",
+            http1: { ...makeProfile().http1, headerCasing: "original" },
+        } as unknown as BrowserProfile;
+        expect(profileHttp1Config(profile).headerCasing).toBe("original");
+    });
+
+    it("exposes the profile default headers and header order", () => {
+        const config = profileHttp1Config(makeProfile());
+        expect(config.defaultHeaders["user-agent"]).toBe("test/1.0");
+        expect(config.defaultHeaders.accept).toBe("*/*");
+        expect(config.headerOrder).toEqual(["user-agent", "accept"]);
     });
 });
 
