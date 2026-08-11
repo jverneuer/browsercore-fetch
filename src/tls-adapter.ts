@@ -8,9 +8,20 @@
  * adapter bridges the two without forcing casts: it generates its own
  * {@link TransportId}, maps TLS states to transport states via an exhaustive
  * switch, and forwards the decrypted payloads as plain `Uint8Array` chunks.
+ *
+ * ## Private event bus
+ *
+ * The adapter satisfies the {@link Transport} surface via a **private**
+ * `EventEmitter`. It deliberately does NOT re-use the shared, injected
+ * `EventProvider` bus. Re-using the shared bus caused an event-forwarding loop:
+ * TLS emits `"error"` on the shared bus → the adapter's own `on("error")`
+ * listener fires → the adapter calls `this.emit("error", …)` → the listener
+ * fires again → stack overflow. With a private emitter, close/error forwarded
+ * from the TLS connection land on the adapter's own bus and are observed only
+ * by HTTP-layer listeners, never re-broadcast to the shared bus.
  */
 
-import type { EventProvider } from "@browsercore/contracts";
+import { EventEmitter } from "node:events";
 import type { CloseReason as TlsCloseReasonType, TlsConnection, TlsState } from "@browsercore/tls";
 import type { CloseReason, Transport, TransportId, TransportState } from "@browsercore/transport";
 import { assertNever, createId } from "./utils.js";
@@ -19,54 +30,67 @@ import { assertNever, createId } from "./utils.js";
  * Adapt a {@link TlsConnection} to the {@link Transport} interface the HTTP
  * layers expect. The adapter owns its own {@link TransportId} (independent of
  * the TLS session id) and projects the TLS lifecycle onto transport states.
+ *
+ * The adapter's {@link Transport} event surface is backed by a **private**
+ * emitter (see class header) so that close/error forwarded from the TLS
+ * connection are delivered to HTTP-layer listeners without touching the shared
+ * injected bus.
  */
 export class TlsTransportAdapter implements Transport {
     public readonly id: TransportId;
-    private readonly events: EventProvider;
+    private readonly internalEmitter = new EventEmitter();
     private readonly tls: TlsConnection;
 
     // -------------------------------------------------------------------------
-    // EventProvider delegation — decouples the adapter from node:events.
+    // EventProvider delegation — backed by the private internal emitter, NOT
+    // the shared injected bus, to prevent the close/error forwarding loop.
     // -------------------------------------------------------------------------
 
     public on(event: string, listener: (...args: unknown[]) => void): void {
-        this.events.on(event, listener);
+        this.internalEmitter.on(event, listener);
     }
 
     public once(event: string, listener: (...args: unknown[]) => void): void {
-        this.events.once(event, listener);
+        this.internalEmitter.once(event, listener);
     }
 
     public off(event: string, listener: (...args: unknown[]) => void): void {
-        this.events.off(event, listener);
+        this.internalEmitter.off(event, listener);
     }
 
     public removeListener(event: string, listener: (...args: unknown[]) => void): void {
-        this.events.removeListener(event, listener);
+        this.internalEmitter.removeListener(event, listener);
     }
 
     public emit(event: string, ...args: unknown[]): boolean {
-        return this.events.emit(event, ...args);
+        return this.internalEmitter.emit(event, ...args);
     }
 
     public listenerCount(event: string): number {
-        return this.events.listenerCount(event);
+        return this.internalEmitter.listenerCount(event);
     }
 
     public removeAllListeners(event?: string): void {
-        this.events.removeAllListeners(event);
+        // Node's EventEmitter distinguishes removeAllListeners() (removes all
+        // events) from removeAllListeners(undefined) (no-op for that key). Pass
+        // the no-arg form through explicitly so clearing all events works.
+        if (event === undefined) {
+            this.internalEmitter.removeAllListeners();
+        } else {
+            this.internalEmitter.removeAllListeners(event);
+        }
     }
 
-    public constructor(tls: TlsConnection, events: EventProvider) {
+    public constructor(tls: TlsConnection) {
         this.id = createId("tls") as TransportId;
-        this.events = events;
         this.tls = tls;
-        // Forward close/error from the TLS connection to adapter listeners.
+        // Forward close/error from the TLS connection onto the adapter's
+        // PRIVATE emitter — never the shared injected bus.
         this.tls.on("close", () => {
-            this.emit("close", false);
+            this.internalEmitter.emit("close", false);
         });
         this.tls.on("error", (err: unknown) => {
-            this.emit("error", err);
+            this.internalEmitter.emit("error", err);
         });
     }
 
@@ -93,9 +117,15 @@ export class TlsTransportAdapter implements Transport {
     }
 }
 
-/** Build a {@link Transport} backed by an established {@link TlsConnection}. */
-export function adaptTlsToTransport(tls: TlsConnection, events: EventProvider): Transport {
-    return new TlsTransportAdapter(tls, events);
+/**
+ * Build a {@link Transport} backed by an established {@link TlsConnection}.
+ *
+ * The adapter owns a private event bus, so no {@link EventProvider} is needed
+ * here — close/error forwarded from the TLS connection are delivered to HTTP
+ * listeners without ever touching the shared injected bus.
+ */
+export function adaptTlsToTransport(tls: TlsConnection): Transport {
+    return new TlsTransportAdapter(tls);
 }
 
 /** Project a {@link TlsState} onto a {@link TransportState} (exhaustive). */
