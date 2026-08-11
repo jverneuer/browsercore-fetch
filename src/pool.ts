@@ -13,7 +13,8 @@
  */
 
 import type { Transport } from "@browsercore/transport";
-import type { CryptoProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
+import type { EventProvider, Net, DnsResolver } from "@browsercore/contracts";
+import type { CryptoProvider } from "@browsercore/crypto";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
 import { FetchError } from "./errors.js";
