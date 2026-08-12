@@ -12,7 +12,8 @@
  * ## Private event bus
  *
  * The adapter satisfies the {@link Transport} surface via a **private**
- * `EventEmitter`. It deliberately does NOT re-use the shared, injected
+ * runtime-independent internal emitter ({@link InternalEventEmitter}, no
+ * `node:events` dependency). It deliberately does NOT re-use the shared, injected
  * `EventProvider` bus. Re-using the shared bus caused an event-forwarding loop:
  * TLS emits `"error"` on the shared bus → the adapter's own `on("error")`
  * listener fires → the adapter calls `this.emit("error", …)` → the listener
@@ -21,7 +22,7 @@
  * by HTTP-layer listeners, never re-broadcast to the shared bus.
  */
 
-import { EventEmitter } from "node:events";
+import { InternalEventEmitter } from "./internal-emitter.js";
 import type { CloseReason as TlsCloseReasonType, TlsConnection, TlsState } from "@browsercore/tls";
 import type { CloseReason, Transport, TransportId, TransportState } from "@browsercore/transport";
 import { assertNever, createId } from "./utils.js";
@@ -38,7 +39,7 @@ import { assertNever, createId } from "./utils.js";
  */
 export class TlsTransportAdapter implements Transport {
     public readonly id: TransportId;
-    private readonly internalEmitter = new EventEmitter();
+    private readonly internalEmitter = new InternalEventEmitter();
     private readonly tls: TlsConnection;
 
     // -------------------------------------------------------------------------
@@ -71,9 +72,10 @@ export class TlsTransportAdapter implements Transport {
     }
 
     public removeAllListeners(event?: string): void {
-        // Node's EventEmitter distinguishes removeAllListeners() (removes all
-        // events) from removeAllListeners(undefined) (no-op for that key). Pass
-        // the no-arg form through explicitly so clearing all events works.
+        // The internal emitter mirrors Node's distinction between
+        // removeAllListeners() (removes all events) and
+        // removeAllListeners(undefined). Pass the no-arg form through explicitly
+        // so clearing all events works.
         if (event === undefined) {
             this.internalEmitter.removeAllListeners();
         } else {
