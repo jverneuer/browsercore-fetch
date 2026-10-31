@@ -186,6 +186,7 @@ export async function establishConnection(
     serverName: string,
     events: EventProvider,
     crypto: CryptoProvider,
+    compression: CompressionProvider | undefined,
 ): Promise<PooledConnection> {
     const tlsConfig = profileToTlsConfig(profile, serverName);
     const tls = await connectTls({
@@ -195,6 +196,10 @@ export async function establishConnection(
         alpnProtocols: ALPN_PROTOCOLS,
         events,
         crypto,
+        // RFC 8879: with a provider the ClientHello advertises
+        // compress_certificate (27) and CompressedCertificate replies are
+        // expanded; without one, the tls layer strips ext 27 itself.
+        ...(compression === undefined ? {} : { compression }),
     });
     const alpn = tls.alpnProtocol;
     // Adapt the TLS connection to the Transport interface for the HTTP layer.

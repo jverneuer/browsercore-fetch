@@ -280,6 +280,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     }
     if (resolvedCrypto !== undefined) {
         poolOptions.crypto = resolvedCrypto;
+        if (resolvedCompression !== undefined) {
+            poolOptions.compression = resolvedCompression;
+        }
     }
     if (options?.transportFactory !== undefined) {
         poolOptions.transportFactory = options.transportFactory;
