@@ -14,6 +14,7 @@
 
 import type { Transport } from "@browsercore/transport";
 import type { EventProvider, Net, DnsResolver } from "@browsercore/contracts";
+import type { CompressionProvider } from "@browsercore/contracts";
 import type { CryptoProvider } from "@browsercore/crypto";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
@@ -54,6 +55,13 @@ export interface PoolOptions {
      * (e.g. browsersmith passes the Node adapter).
      */
     dns?: DnsResolver;
+    /**
+     * Platform compression provider (RFC 8879 certificate compression).
+     * Injected by the application entrypoint; when present the ClientHello
+     * advertises compress_certificate and CompressedCertificate replies are
+     * expanded, when absent the tls layer strips the extension.
+     */
+    compression?: CompressionProvider;
     /**
      * Platform crypto provider. Injected by the application entrypoint
      * (e.g. browsersmith passes `platform.crypto.provider`). Required for the
@@ -200,7 +208,7 @@ export function createPool(
                         "Pass crypto via PoolOptions or provide a Platform.",
                 );
             }
-            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto);
+            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
         } else {
             // Test seam: a caller-supplied factory yields a transport that
             // already speaks the HTTP layer's bytes (past any TLS the

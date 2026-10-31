@@ -14,7 +14,6 @@ import {
     CIPHER_SUITE_CODES,
     NAMED_GROUP_CODES,
     SIGNATURE_SCHEME_CODES,
-    ExtensionType,
     type CipherSuite,
     type NamedGroup,
     type ProtocolVersion,
@@ -165,17 +164,6 @@ function validateSupportedVersions(versions: readonly string[]): readonly Protoc
 }
 
 /**
- * ECH (encrypted_client_hello, extension 65037) requires HPKE keys the client
- * does not have. An empty-body ECH makes the ClientHello look odd and some
- * servers reject it, so the client filters it out of the profile's
- * extensionOrder before connecting. The TLS layer can still encode an empty
- * placeholder if ECH is ever explicitly requested.
- */
-function filterExtensionOrder(extensions: readonly number[]): readonly number[] {
-    return extensions.filter((ext) => ext !== ExtensionType.ENCRYPTED_CLIENT_HELLO);
-}
-
-/**
  * Translate a browser profile into TLS ClientHello configuration. The profile's
  * string arrays are validated and narrowed to the literal unions the TLS layer
  * expects; an invalid value surfaces as a {@link FetchError}. Version and
@@ -188,7 +176,7 @@ export function profileToTlsConfig(profile: BrowserProfile, serverName: string) 
         keyShareGroups: profile.tls.keyShareGroups.map(asNamedGroup),
         signatureAlgorithms: profile.tls.signatureAlgorithms.map(asSignatureScheme),
         supportedVersions: validateSupportedVersions(profile.tls.supportedVersions),
-        extensionOrder: filterExtensionOrder(profile.tls.extensionOrder),
+        extensionOrder: profile.tls.extensionOrder,
         grease: profile.tls.grease,
         serverName,
         alpnProtocols: ALPN_PROTOCOLS,
