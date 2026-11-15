@@ -8,13 +8,18 @@ import {
 } from "@browsercore/profiles";
 import {
     ALPN_PROTOCOLS,
+    applyAcceptEncodingDefault,
     applyHttp1Profile,
+    applyHttp2DefaultHeaders,
+    profileAcceptEncoding,
     profileHttp1Config,
     profileHttp2Config,
+    profileHttp2DefaultHeaders,
     profileHttp2Settings,
     profileToTlsConfig,
 } from "../src/profile.js";
 import { FetchError } from "../src/errors.js";
+import { compression } from "./helpers/test-compression.js";
 
 /** Build a minimal valid profile for translation tests. */
 function makeProfile(overrides: Partial<BrowserProfile> = {}): BrowserProfile {
@@ -229,6 +234,119 @@ describe("applyHttp1Profile", () => {
     });
 });
 
+describe("profileHttp2DefaultHeaders / applyHttp2DefaultHeaders", () => {
+    it("returns {} when the installed profiles version lacks http2DefaultHeaders (<0.2.4)", () => {
+        // Profiles 0.2.x ships no such field — the read must be a safe no-op.
+        expect(profileHttp2DefaultHeaders(makeProfile())).toEqual({});
+    });
+
+    it("reads the field when a 0.2.4+ profile carries it (structural contract)", () => {
+        const profile = {
+            ...makeProfile(),
+            http2DefaultHeaders: { priority: "u=0, i" },
+        } as unknown as BrowserProfile;
+        expect(profileHttp2DefaultHeaders(profile)).toEqual({ priority: "u=0, i" });
+    });
+
+    it("merges http2DefaultHeaders as defaults (absent field → no-op)", () => {
+        const headers = new Map<string, string>();
+        applyHttp2DefaultHeaders(headers, makeProfile());
+        expect(headers.size).toBe(0);
+    });
+
+    it("applies the profile's h2 default headers that are not already set", () => {
+        const profile = {
+            ...makeProfile(),
+            http2DefaultHeaders: { priority: "u=0, i", te: "trailers" },
+        } as unknown as BrowserProfile;
+        const headers = new Map<string, string>();
+        applyHttp2DefaultHeaders(headers, profile);
+        expect(headers.get("priority")).toBe("u=0, i");
+        expect(headers.get("te")).toBe("trailers");
+    });
+
+    it("does not overwrite an explicitly-set header", () => {
+        const profile = {
+            ...makeProfile(),
+            http2DefaultHeaders: { priority: "u=0, i" },
+        } as unknown as BrowserProfile;
+        const headers = new Map<string, string>([["priority", "u=4, i"]]);
+        applyHttp2DefaultHeaders(headers, profile);
+        expect(headers.get("priority")).toBe("u=4, i");
+    });
+});
+
+describe("profileAcceptEncoding", () => {
+    it("passes through the profile list when every token is decodable", () => {
+        expect(profileAcceptEncoding(makeProfile())).toBe("gzip, deflate, br");
+    });
+
+    it("drops tokens the compression provider cannot decode (zstd, unknown)", () => {
+        // Chrome 140's browser-true list is "gzip, deflate, br, zstd"; the
+        // platform provider decodes gzip/deflate/br only, so zstd is dropped —
+        // advertising it would make compressed responses undecodable.
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "gzip, deflate, br, zstd";
+        expect(profileAcceptEncoding(profile)).toBe("gzip, deflate, br");
+    });
+
+    it("drops unknown tokens and preserves order", () => {
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "br, future-codec, gzip";
+        expect(profileAcceptEncoding(profile)).toBe("br, gzip");
+    });
+
+    it("tolerates surrounding whitespace and case differences", () => {
+        // Token case is preserved on the wire; matching against the decodable
+        // set is case-insensitive.
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = " GZIP ,  br ";
+        expect(profileAcceptEncoding(profile)).toBe("GZIP, br");
+    });
+
+    it("preserves q-parameters on kept tokens", () => {
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "gzip;q=0.8, zstd;q=1.0";
+        expect(profileAcceptEncoding(profile)).toBe("gzip;q=0.8");
+    });
+
+    it("returns an empty string when nothing is decodable", () => {
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "zstd, future-codec";
+        expect(profileAcceptEncoding(profile)).toBe("");
+    });
+});
+
+describe("applyAcceptEncodingDefault", () => {
+    it("sets the filtered profile value when a compression provider is present", () => {
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "gzip, deflate, br, zstd";
+        const headers = new Map<string, string>();
+        applyAcceptEncodingDefault(headers, profile, compression);
+        expect(headers.get("accept-encoding")).toBe("gzip, deflate, br");
+    });
+
+    it("sets nothing when no compression provider is injected (we cannot decode what we advertise)", () => {
+        const headers = new Map<string, string>();
+        applyAcceptEncodingDefault(headers, makeProfile(), undefined);
+        expect(headers.has("accept-encoding")).toBe(false);
+    });
+
+    it("does not overwrite an already-set accept-encoding (caller headers win)", () => {
+        const headers = new Map<string, string>([["accept-encoding", "identity"]]);
+        applyAcceptEncodingDefault(headers, makeProfile(), compression);
+        expect(headers.get("accept-encoding")).toBe("identity");
+    });
+
+    it("sets nothing when the intersection is empty", () => {
+        const profile = makeProfile();
+        profile.http1.acceptEncoding = "zstd";
+        const headers = new Map<string, string>();
+        applyAcceptEncodingDefault(headers, profile, compression);
+        expect(headers.has("accept-encoding")).toBe(false);
+    });
+});
+
 describe("profileHttp2Config", () => {
     it("returns RFC/browser defaults when the profile omits impersonation fields", () => {
         const config = profileHttp2Config(makeProfile());
@@ -236,7 +354,7 @@ describe("profileHttp2Config", () => {
         expect(config.settingsOrder).toEqual([1, 2, 4, 6]);
         expect(config.grease).toBe(false);
         expect(config.connectionWindowUpdate).toBe(0);
-        expect(config.pseudoHeaderOrder).toEqual(["method", "scheme", "authority", "path"]);
+        expect(config.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
         expect(config.priorityFrames).toEqual([]);
     });
 

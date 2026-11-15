@@ -22,13 +22,20 @@ import {
 import { Http2Settings, type Http2SettingsMap, type PriorityFrameSpec } from "@browsercore/http2";
 import type { HeaderCasing } from "@browsercore/http1";
 import type { BrowserProfile } from "@browsercore/profiles";
+import { SUPPORTED_ENCODINGS } from "@browsercore/compression";
+import type { CompressionProvider } from "@browsercore/contracts";
 import { FetchError } from "./errors.js";
 
 /** RFC 9113 §6.5.2 SETTINGS id order assumed when a profile omits settingsOrder. */
 const DEFAULT_SETTINGS_ORDER: readonly number[] = [1, 2, 4, 6];
 
-/** RFC 7540 §8.1.2 pseudo-header order assumed when a profile omits it. */
-const DEFAULT_PSEUDO_HEADER_ORDER: readonly string[] = ["method", "scheme", "authority", "path"];
+/**
+ * Pseudo-header order assumed when a profile omits it. Chrome's order — no
+ * current browser emits the RFC 7540 §8.1.2 example order
+ * (`method, scheme, authority, path`), so using it as the default was a
+ * fingerprint outlier.
+ */
+const DEFAULT_PSEUDO_HEADER_ORDER: readonly string[] = ["method", "authority", "scheme", "path"];
 
 /**
  * Browser families whose HTTP/1.1 header field names are Title-Cased on the
@@ -313,5 +320,96 @@ export function applyHttp1Profile(headers: Map<string, string>, profile: Browser
         if (!headers.has(name)) {
             headers.set(name, value);
         }
+    }
+}
+
+/**
+ * The optional `http2DefaultHeaders` contract field being added to
+ * `BrowserProfile` in @browsercore/profiles 0.2.4 (e.g. chrome:
+ * `{"priority":"u=0, i"}`, firefox: `te`/`priority`). Declared locally here via
+ * structural typing so fetch compiles against both the published 0.2.x line
+ * (field absent → every reader below is a no-op) and >= 0.2.4 (field present →
+ * merged as defaults). No runtime dependency on unpublished code; delete this
+ * interface once profiles ^0.2.4 is the minimum and ships the field itself.
+ */
+export interface BrowserProfileH2Defaults {
+    /** Default regular headers the browser sends on every HTTP/2 request. */
+    readonly http2DefaultHeaders?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Read {@link BrowserProfileH2Defaults.http2DefaultHeaders} defensively.
+ * Profiles < 0.2.4 do not carry the field; the assertion is sound because the
+ * added member is optional, so every existing profile object already satisfies
+ * the widened type.
+ */
+export function profileHttp2DefaultHeaders(
+    profile: BrowserProfile,
+): Readonly<Record<string, string>> {
+    const withH2Defaults = profile as BrowserProfile & BrowserProfileH2Defaults;
+    return withH2Defaults.http2DefaultHeaders ?? {};
+}
+
+/**
+ * Apply the profile's h2 default headers as request-header defaults (explicit
+ * headers win). Applied in the shared header-assembly path, so both wire
+ * protocols see them — headers are assembled BEFORE the pooled connection (and
+ * thus the ALPN result) exists, and browsers send `priority` on both h1 and h2
+ * anyway. No-op when the installed profiles version lacks the field.
+ */
+export function applyHttp2DefaultHeaders(headers: Map<string, string>, profile: BrowserProfile): void {
+    for (const [name, value] of Object.entries(profileHttp2DefaultHeaders(profile))) {
+        if (!headers.has(name)) {
+            headers.set(name, value);
+        }
+    }
+}
+
+/**
+ * Encoding tokens safe to advertise in `accept-encoding`: everything the
+ * compression provider can decode, minus `identity` (browsers never list it).
+ * Single source of truth: the literal set @browsercore/compression can decode.
+ */
+const ADVERTISABLE_ENCODINGS: ReadonlySet<string> = new Set(
+    SUPPORTED_ENCODINGS.filter((encoding) => encoding !== "identity"),
+);
+
+/**
+ * Compute the profile's default `accept-encoding` value: the browser-true list
+ * from `http1.acceptEncoding` intersected with the encodings this platform can
+ * actually decode. Advertising an encoding the injected provider cannot
+ * decompress (e.g. `zstd` before the provider learns it) would make compressed
+ * responses undecodable, so unsupported tokens are dropped. Any q-parameters
+ * on a kept token are preserved verbatim; token order (a fingerprint signal)
+ * is preserved.
+ */
+export function profileAcceptEncoding(profile: BrowserProfile): string {
+    const decodableTokens = profile.http1.acceptEncoding
+        .split(",")
+        .map((segment) => segment.trim())
+        .filter((segment) => {
+            const encodingName = (segment.split(";")[0] ?? "").trim().toLowerCase();
+            return ADVERTISABLE_ENCODINGS.has(encodingName);
+        });
+    return decodableTokens.join(", ");
+}
+
+/**
+ * Apply {@link profileAcceptEncoding} as the `accept-encoding` default when a
+ * compression provider is injected and no value is already set. Without a
+ * provider we advertise nothing — we cannot decode what we would be asking
+ * for — and let the server respond with an identity body.
+ */
+export function applyAcceptEncodingDefault(
+    headers: Map<string, string>,
+    profile: BrowserProfile,
+    compression: CompressionProvider | undefined,
+): void {
+    if (compression === undefined || headers.has("accept-encoding")) {
+        return;
+    }
+    const value = profileAcceptEncoding(profile);
+    if (value !== "") {
+        headers.set("accept-encoding", value);
     }
 }

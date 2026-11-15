@@ -32,7 +32,12 @@ import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/pr
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
 import { createPool, type ConnectionPool, type PoolOptions } from "./pool.js";
-import { applyHttp1Profile, profileHttp1Config } from "./profile.js";
+import {
+    applyAcceptEncodingDefault,
+    applyHttp1Profile,
+    applyHttp2DefaultHeaders,
+    profileHttp1Config,
+} from "./profile.js";
 import { METHODS_PRESERVED_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
 import { readSetCookie } from "./response.js";
 import { assertNever, createId } from "./utils.js";
@@ -184,15 +189,25 @@ function defaultProfile(): BrowserProfile {
     };
 }
 
-/** Build the request header map from options + profile defaults. */
+/**
+ * Build the request header map from options + profile defaults.
+ *
+ * Defaults are applied for BOTH wire protocols — this assembly runs before the
+ * pooled connection exists, so the negotiated protocol (ALPN result) is not yet
+ * known. Protocol-specific corrections (e.g. stripping `host` over h2) happen
+ * later in the per-protocol dispatchers.
+ */
 function buildHeaders(
     url: ParsedUrl,
     opts: FetchOptions | undefined,
     profile: BrowserProfile | undefined,
+    compression: CompressionProvider | undefined,
 ): Map<string, string> {
     const headers = new Map<string, string>();
     if (profile) {
         applyHttp1Profile(headers, profile);
+        applyHttp2DefaultHeaders(headers, profile);
+        applyAcceptEncodingDefault(headers, profile, compression);
     }
     if (opts?.headers) {
         for (const [name, value] of Object.entries(opts.headers)) {
@@ -300,7 +315,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
         const jar = resolveCookieJar(opts, options) ?? defaultJar;
         const profile = profileId ? getProfile(profileId) : undefined;
         const method = opts?.method ?? "GET";
-        const headers = buildHeaders(url, opts, profile);
+        const headers = buildHeaders(url, opts, profile, resolvedCompression);
         applyCookies(headers, jar, url);
         const target = originString(url) + requestTarget(url);
 
