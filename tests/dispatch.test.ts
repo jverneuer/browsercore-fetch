@@ -400,6 +400,45 @@ describe("dispatchHttp2 — pseudo-headers", () => {
     });
 });
 
+describe("dispatchHttp2 — host header removal", () => {
+    it("deletes the host header once :authority is set (no browser sends host over h2)", async () => {
+        // buildHeaders adds `host` for the http/1.1 path; the h2 dispatcher
+        // must strip it — a regular `host` header on an h2 request is a
+        // deterministic nginx/WAF 400 (RFC 9113 §8.3.6: :authority replaces it).
+        const conn = fakeHttp2(() => okH2Response());
+        const headers = new Map([["host", "example.com"]]);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined);
+        const h = conn.requests[0]?.headers;
+        expect(h?.get(":authority")).toBe("example.com");
+        expect(h?.has("host")).toBe(false);
+    });
+
+    it("deletes even a caller-supplied host header (spec forbids host on h2, not just our copy)", async () => {
+        const conn = fakeHttp2(() => okH2Response());
+        const headers = new Map([
+            ["host", "custom.example"],
+            [":authority", "custom.example"],
+        ]);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined);
+        const h = conn.requests[0]?.headers;
+        expect(h?.get(":authority")).toBe("custom.example");
+        expect(h?.has("host")).toBe(false);
+    });
+
+    it("sends no host header when none was supplied either", async () => {
+        const conn = fakeHttp2(() => okH2Response());
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", new Map(), undefined);
+        expect(conn.requests[0]?.headers.has("host")).toBe(false);
+    });
+
+    it("contrast: dispatchHttp1 KEEPS the host header (required on http/1.1)", async () => {
+        const conn = fakeHttp1(() => okResponse());
+        const headers = new Map([["host", "example.com"]]);
+        await dispatchHttp1(conn, url("https://example.com/"), "GET", headers, undefined);
+        expect(conn.requests[0]?.headers.get("host")).toBe("example.com");
+    });
+});
+
 describe("dispatchHttp2 — body encoding", () => {
     it("encodes a string body to bytes", async () => {
         const conn = fakeHttp2(() => okH2Response());
@@ -557,6 +596,48 @@ describe("establishConnection — ALPN dispatch", () => {
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
         expect(mockConnectHttp2).not.toHaveBeenCalled();
+    });
+
+    it("injects the compression provider as http/1.1 decompressionProvider when present", async () => {
+        // The profile-driven accept-encoding default makes compressed http/1.1
+        // responses the normal case; http1 raises ContentEncodingError without
+        // a decompression backend, so the provider must be threaded through.
+        mockConnectTls.mockReset();
+        mockConnectHttp1.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("http/1.1"));
+        mockConnectHttp1.mockResolvedValue({ id: "h1-decomp" });
+
+        await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+            compression,
+        );
+
+        expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
+        const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
+        expect(opts.decompressionProvider).toBe(compression);
+    });
+
+    it("omits decompressionProvider when no compression provider is injected", async () => {
+        mockConnectTls.mockReset();
+        mockConnectHttp1.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("http/1.1"));
+        mockConnectHttp1.mockResolvedValue({ id: "h1-nodecomp" });
+
+        await establishConnection(
+            { id: "t" } as Transport,
+            fakeProfile(),
+            "example.com",
+            stubEvents(),
+            crypto,
+            undefined,
+        );
+
+        const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
+        expect("decompressionProvider" in opts).toBe(false);
     });
 
     it("passes the profile impersonation config (settingsOrder, grease, window update, pseudo-header order) to connectHttp2", async () => {

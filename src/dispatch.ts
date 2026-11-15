@@ -152,6 +152,14 @@ export async function dispatchHttp2(
             url.port === defaultPort(url.scheme) ? url.host : `${url.host}:${url.port}`,
         );
     }
+    // RFC 9113 §8.3.6: `:authority` REPLACES the http/1.1 `host` header — no
+    // browser sends `host` over h2, and nginx-based edges deterministically 400
+    // a regular `host` header on an h2 request (live-confirmed WAF trigger).
+    // buildHeaders adds `host` for the http/1.1 path (where it is required);
+    // this is the single place it is stripped for the h2 wire. Applies even to
+    // a caller-supplied `host` — the spec forbids the header on this protocol,
+    // not just our auto-generated copy of it.
+    wireHeaders.delete("host");
     const response = await conn.request({
         method,
         scheme: url.scheme,
@@ -231,7 +239,14 @@ export async function establishConnection(
         return { protocol: "http2", id: conn.id, conn };
     }
     // Default to HTTP/1.1 when ALPN is missing or selects http/1.1.
-    const conn = await connectHttp1({ transport: httpTransport });
+    // Thread the compression provider as the decompression backend: the
+    // profile-driven `accept-encoding` default makes compressed http/1.1
+    // responses the normal case, and http1 raises ContentEncodingError when
+    // it has no provider to decode them with.
+    const conn = await connectHttp1({
+        transport: httpTransport,
+        ...(compression === undefined ? {} : { decompressionProvider: compression }),
+    });
     return { protocol: "http1", id: conn.id, conn };
 }
 

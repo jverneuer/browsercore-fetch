@@ -23,10 +23,32 @@ vi.mock("../src/pool.js", () => ({
     createPool: () => fakePool,
 }));
 
-// Import AFTER the mock is registered.
+// ---------------------------------------------------------------------------
+// Profiles mock: getProfile can be overridden per-test so the optional
+// `http2DefaultHeaders` contract field (profiles 0.2.4) can be simulated on
+// top of the installed 0.2.x data. Unset → the real registry answers.
+// ---------------------------------------------------------------------------
+
+const mockGetProfile = vi.fn();
+vi.mock("@browsercore/profiles", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@browsercore/profiles")>();
+    return {
+        ...actual,
+        getProfile: (id: Parameters<typeof actual.getProfile>[0]) =>
+            mockGetProfile(id) ?? actual.getProfile(id),
+    };
+});
+
+// Import AFTER the mocks are registered.
 // eslint-disable-next-line import/first
 import { createClient } from "../src/client.js";
 import { createTestPlatform } from "./helpers/test-platform.js";
+// eslint-disable-next-line import/first
+import { ChromeProfiles, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
+// eslint-disable-next-line import/first
+import type { BrowserProfileH2Defaults } from "../src/profile.js";
+// eslint-disable-next-line import/first
+import type { Http2Request } from "@browsercore/http2";
 
 // createClient requires an injected Platform (its pool throws without an
 // EventProvider). fetch never provides its own; browsersmith is the sole
@@ -106,6 +128,111 @@ describe("client — http2 dispatch path", () => {
             expect(resp.status).toBe(201);
             expect(resp.headers["content-type"]).toBe("application/json");
             expect(await resp.json()).toEqual({ ok: true });
+        } finally {
+            await client.close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Request-fidelity tests: the wire headers a profiled h2 request carries.
+// D1: no `host` regular header over h2 (WAF trigger). D4: profile-driven
+// accept-encoding (filtered to decodable encodings) + http2DefaultHeaders.
+// ---------------------------------------------------------------------------
+
+describe("client — http2 request fidelity (host removal, accept-encoding, priority)", () => {
+    /**
+     * A chrome-140 profile carrying the 0.2.4 contract fields: the browser-true
+     * accept-encoding WITH zstd, and http2DefaultHeaders with Chrome's priority
+     * header. Simulates the data profiles 0.2.4 will ship.
+     */
+    function chrome140WithH2Defaults(): BrowserProfile & BrowserProfileH2Defaults {
+        return {
+            ...ChromeProfiles.chrome140,
+            http1: {
+                ...ChromeProfiles.chrome140.http1,
+                acceptEncoding: "gzip, deflate, br, zstd",
+            },
+            http2DefaultHeaders: { priority: "u=0, i" },
+        };
+    }
+
+    /** Fake h2 connection that records every request's wire headers. */
+    function recordingHttp2(requests: Http2Request[]): {
+        conn: unknown;
+        pooled: { protocol: "http2"; id: string; conn: unknown };
+    } {
+        const conn = {
+            id: "h2-record",
+            settings: {},
+            async request(req: Http2Request) {
+                requests.push(req);
+                return {
+                    statusCode: 200,
+                    headers: new Map<string, string>(),
+                    body: new TextEncoder().encode("ok"),
+                };
+            },
+            async goaway() {},
+            async ping() {
+                return 0n;
+            },
+            async close() {},
+        };
+        return { conn, pooled: { protocol: "http2" as const, id: "h2-record", conn } };
+    }
+
+    it("h2 wire headers carry :authority and NO host, filtered accept-encoding, priority default", async () => {
+        const requests: Http2Request[] = [];
+        const { pooled } = recordingHttp2(requests);
+        fakePool.getConnection.mockReset();
+        fakePool.getConnection.mockResolvedValue(pooled);
+        fakePool.release.mockReset();
+        fakePool.drain.mockReset().mockResolvedValue(undefined);
+        mockGetProfile.mockReset();
+        mockGetProfile.mockImplementation((id: ProfileId) =>
+            id === ChromeProfiles.chrome140.id ? chrome140WithH2Defaults() : undefined,
+        );
+
+        const client = createClient({ platform, profile: ChromeProfiles.chrome140.id });
+        try {
+            const resp = await client.fetch("https://example.com/h2");
+            expect(resp.status).toBe(200);
+            const wire = requests[0]?.headers;
+            // D1: :authority present, host stripped (nginx edges 400 a regular
+            // host header on h2 — no browser sends it).
+            expect(wire?.get(":authority")).toBe("example.com");
+            expect(wire?.has("host")).toBe(false);
+            // D4: browser-true accept-encoding filtered to what the platform
+            // compression provider can decode (zstd dropped).
+            expect(wire?.get("accept-encoding")).toBe("gzip, deflate, br");
+            // D4: http2DefaultHeaders merged as defaults.
+            expect(wire?.get("priority")).toBe("u=0, i");
+        } finally {
+            await client.close();
+        }
+    });
+
+    it("caller-supplied accept-encoding and priority win over profile defaults, untouched", async () => {
+        const requests: Http2Request[] = [];
+        const { pooled } = recordingHttp2(requests);
+        fakePool.getConnection.mockReset();
+        fakePool.getConnection.mockResolvedValue(pooled);
+        fakePool.release.mockReset();
+        fakePool.drain.mockReset().mockResolvedValue(undefined);
+        mockGetProfile.mockReset();
+        mockGetProfile.mockImplementation((id: ProfileId) =>
+            id === ChromeProfiles.chrome140.id ? chrome140WithH2Defaults() : undefined,
+        );
+
+        const client = createClient({ platform, profile: ChromeProfiles.chrome140.id });
+        try {
+            await client.fetch("https://example.com/h2", {
+                headers: { "accept-encoding": "identity", priority: "u=9" },
+            });
+            const wire = requests[0]?.headers;
+            expect(wire?.get("accept-encoding")).toBe("identity");
+            expect(wire?.get("priority")).toBe("u=9");
         } finally {
             await client.close();
         }
