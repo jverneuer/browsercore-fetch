@@ -8,6 +8,7 @@
 
 import type { CookieJar } from "@browsercore/cookies";
 import type { ProfileId } from "@browsercore/profiles";
+import type { ProxyConfig } from "@browsercore/proxy";
 
 /** Branded request identifier for logging / correlation. */
 export type FetchRequestId = string & { __brand: "FetchRequestId" };
@@ -46,6 +47,12 @@ export interface FetchOptions {
     readonly timeoutMs?: number;
     /** Cookie jar to send cookies from and store Set-Cookie into. */
     readonly cookieJar?: CookieJar;
+    /**
+     * Tunnel this request through a proxy (HTTP CONNECT or SOCKS5/5h via
+     * @browsercore/proxy). A per-request proxy replaces the client-level
+     * default; when absent, the client default applies.
+     */
+    readonly proxy?: ProxyConfig;
     /** Abort signal — cancels the request when triggered. */
     readonly signal?: AbortSignal;
 }

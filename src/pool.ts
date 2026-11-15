@@ -1,10 +1,17 @@
 /**
  * Connection pooling for @browsercore/fetch.
  *
- * A pool maps each origin (host:port) to at most one pooled protocol connection
+ * A pool maps each origin (host:port) — plus the proxy identity when a
+ * connection is tunneled — to at most one pooled protocol connection
  * (HTTP/1.1 or HTTP/2). Connections are established lazily on first use and
- * reused for subsequent requests to the same origin. Each entry carries an idle
+ * reused for subsequent requests to the same key. Each entry carries an idle
  * eviction timer: a connection unused for `idleTimeoutMs` is closed and dropped.
+ *
+ * The pool key includes the proxy (scheme/host/port + an opaque credentials
+ * digest, see `poolKey`): two requests to the same origin through different
+ * proxies — or with different credentials on the same proxy — never share a
+ * connection, and a tunneled connection is never reused for another
+ * origin/proxy pair.
  *
  * The pool also tracks the underlying transport per entry so a timed-out or
  * aborted request can force-close the transport directly (the connection's own
@@ -15,12 +22,14 @@
 import type { Transport } from "@browsercore/transport";
 import type { CompressionProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import type { CryptoProvider } from "@browsercore/crypto";
+import type { ProxyConfig } from "@browsercore/proxy";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
-import { FetchError } from "./errors.js";
+import { FetchError, wrapProxyError } from "./errors.js";
 import {
     establishConnection,
     establishHttp1OverTransport,
+    openProxiedTransport,
     openTcpTransport,
     type PooledConnection,
 } from "./dispatch.js";
@@ -73,6 +82,11 @@ export interface PoolOptions {
      * When provided, this is called instead of opening a real TCP transport +
      * TLS handshake. It must return a {@link Transport} that speaks the bytes
      * the HTTP layer expects on the *server* side of the connection.
+     *
+     * The factory replaces everything below the HTTP layer — TCP dial, TLS,
+     * and (when a proxy is configured) the proxy tunnel. It therefore receives
+     * the endpoint that is actually dialed: the PROXY's host/port when the
+     * request is proxied, the origin's otherwise.
      */
     transportFactory?: (host: string, port: number) => Promise<Transport> | Transport;
 }
@@ -83,12 +97,16 @@ export interface PoolOptions {
  * `teardown` force-closes the transport and evicts the entry.
  */
 export interface ConnectionPool {
-    /** Get or establish a connection for the given URL + profile. */
-    getConnection(url: ParsedUrl, profileId: ProfileId | undefined): Promise<PooledConnection>;
+    /**
+     * Get or establish a connection for the given URL + profile. When
+     * `proxy` is set the connection is tunneled through it and pooled under
+     * the origin+proxy key.
+     */
+    getConnection(url: ParsedUrl, profileId: ProfileId | undefined, proxy?: ProxyConfig): Promise<PooledConnection>;
     /** Return a borrowed connection to the pool (restart its idle timer). */
-    release(url: ParsedUrl): void;
-    /** Force-close the transport for an origin and evict it from the pool. */
-    teardown(url: ParsedUrl): void;
+    release(url: ParsedUrl, proxy?: ProxyConfig): void;
+    /** Force-close the transport for a pooled entry and evict it. */
+    teardown(url: ParsedUrl, proxy?: ProxyConfig): void;
     /** Close and evict every pooled connection. */
     drain(): Promise<void>;
 }
@@ -186,12 +204,36 @@ export function createPool(
      * Establish + pool a new connection, returning it. The transport is opened
      * exactly once and reused for both the protocol handshake and the
      * pool's own transport map (so teardown can force-close the same socket).
+     *
+     * Three establishment paths:
+     * - `transportFactory` set (test seam) — the factory replaces everything
+     *   below the HTTP layer, so it receives the dialed endpoint (the proxy's
+     *   when proxied) and its transport goes straight to HTTP/1.1.
+     * - direct real path — TCP to the origin, then TLS.
+     * - proxied real path — `openProxiedTransport` dials the proxy and
+     *   tunnels; TLS is then established END-TO-END with the origin over the
+     *   tunneled stream (same `establishConnection` as the direct path).
      */
-    async function establishAndStore(url: ParsedUrl, profile: BrowserProfile): Promise<PooledConnection> {
-        const key = poolKey(url);
+    async function establishAndStore(url: ParsedUrl, profile: BrowserProfile, proxy: ProxyConfig | undefined): Promise<PooledConnection> {
+        const key = poolKey(url, proxy);
         let transport: Transport;
         let pooled: PooledConnection;
-        if (options.transportFactory === undefined) {
+        if (options.transportFactory !== undefined) {
+            // Test seam: a caller-supplied factory yields a transport that
+            // already speaks the HTTP layer's bytes (past any TLS — and any
+            // proxy tunnel — the production path would have applied). Fake
+            // servers in tests speak HTTP/1.1.
+            const dialed = proxy === undefined ? { host: url.host, port: url.port } : { host: proxy.host, port: proxy.port };
+            try {
+                transport = await options.transportFactory(dialed.host, dialed.port);
+            } catch (err) {
+                // The seam stands in for the proxy dial, so proxy-shaped
+                // failures raised here get the same typed wrapping as the
+                // real path would apply; anything else propagates unchanged.
+                throw wrapProxyError(err);
+            }
+            pooled = await establishHttp1OverTransport(transport);
+        } else if (proxy === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.
             // net/dns/events/crypto come from Platform, threaded through
@@ -209,12 +251,19 @@ export function createPool(
             }
             pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
         } else {
-            // Test seam: a caller-supplied factory yields a transport that
-            // already speaks the HTTP layer's bytes (past any TLS the
-            // production path would have applied). Fake servers in tests
-            // speak HTTP/1.1.
-            transport = await options.transportFactory(url.host, url.port);
-            pooled = await establishHttp1OverTransport(transport);
+            // openProxiedTransport throws a clear error when the net adapter
+            // is missing and wraps proxy-handshake failures, so let it run
+            // before the crypto guard to preserve those error paths.
+            transport = await openProxiedTransport(url, proxy, options.net, options.dns);
+            if (options.crypto === undefined) {
+                throw new FetchError(
+                    "createPool requires a crypto provider for the proxied path. " +
+                        "Pass crypto via PoolOptions or provide a Platform.",
+                );
+            }
+            // TLS terminates at the ORIGIN, not the proxy — serverName stays
+            // the origin host and the handshake runs over the tunneled stream.
+            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
         }
         poolTransports.set(key, transport);
         pool.set(key, pooled);
@@ -223,8 +272,8 @@ export function createPool(
     }
 
     return {
-        async getConnection(url, profileId): Promise<PooledConnection> {
-            const key = poolKey(url);
+        async getConnection(url, profileId, proxy): Promise<PooledConnection> {
+            const key = poolKey(url, proxy);
             const existing = pool.get(key);
             if (existing) {
                 // The connection is now in use — stop its idle TTL so it is not
@@ -233,14 +282,14 @@ export function createPool(
                 return existing;
             }
             const profile = profileId ? (lookupProfile(profileId) ?? fallbackProfile) : fallbackProfile;
-            const pooled = await establishAndStore(url, profile);
+            const pooled = await establishAndStore(url, profile, proxy);
             return pooled;
         },
-        release(url: ParsedUrl): void {
-            startIdleTimer(poolKey(url));
+        release(url: ParsedUrl, proxy?: ProxyConfig): void {
+            startIdleTimer(poolKey(url, proxy));
         },
-        teardown(url: ParsedUrl): void {
-            teardownKey(poolKey(url));
+        teardown(url: ParsedUrl, proxy?: ProxyConfig): void {
+            teardownKey(poolKey(url, proxy));
         },
         async drain(): Promise<void> {
             const entries = Array.from(pool.entries());

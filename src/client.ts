@@ -29,6 +29,7 @@ import type {
 import type { CryptoProvider } from "@browsercore/crypto";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
+import type { ProxyConfig } from "@browsercore/proxy";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
 import { createPool, type ConnectionPool, type PoolOptions } from "./pool.js";
@@ -61,6 +62,12 @@ export interface FetchClientOptions {
     readonly profile?: ProfileId;
     /** Default redirect policy. */
     readonly redirectPolicy?: RedirectPolicy;
+    /**
+     * Default proxy every request is tunneled through (HTTP CONNECT or
+     * SOCKS5/5h via @browsercore/proxy) unless the request overrides it with
+     * its own `proxy`. Proxied connections are pooled per origin+proxy pair.
+     */
+    readonly proxy?: ProxyConfig;
     /** Default request timeout in ms. */
     readonly timeoutMs?: number;
     /**
@@ -137,6 +144,17 @@ function resolveProfileId(options: FetchOptions | undefined, defaults: FetchClie
 /** Resolve the effective cookie jar from options + client defaults. */
 function resolveCookieJar(options: FetchOptions | undefined, defaults: FetchClientOptions | undefined): CookieJar | undefined {
     return options?.cookieJar ?? defaults?.cookieJar;
+}
+
+/**
+ * Resolve the effective proxy from options + client defaults.
+ *
+ * A per-request proxy REPLACES the client default when present; when absent
+ * (or explicitly `undefined`), the client default applies — the same
+ * precedence every other default follows.
+ */
+function resolveProxy(options: FetchOptions | undefined, defaults: FetchClientOptions | undefined): ProxyConfig | undefined {
+    return options?.proxy ?? defaults?.proxy;
 }
 
 /** Resolve the effective timeout from options + client defaults. */
@@ -313,6 +331,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
         const profileId = resolveProfileId(opts, options);
         const timeoutMs = resolveTimeout(opts, options);
         const jar = resolveCookieJar(opts, options) ?? defaultJar;
+        // The effective proxy keys the pool entry for the whole request
+        // lifecycle (acquire/release/teardown must agree on it).
+        const proxy = resolveProxy(opts, options);
         const profile = profileId ? getProfile(profileId) : undefined;
         const method = opts?.method ?? "GET";
         const headers = buildHeaders(url, opts, profile, resolvedCompression);
@@ -330,7 +351,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
             }
             settled = true;
             if (pooledRef !== undefined) {
-                pool.teardown(url);
+                pool.teardown(url, proxy);
             }
             rejectDispatch?.(err);
         };
@@ -354,9 +375,9 @@ export function createClient(options?: FetchClientOptions): FetchClient {
             }
             void (async (): Promise<void> => {
                 try {
-                    const pooled = await pool.getConnection(url, profileId);
+                    const pooled = await pool.getConnection(url, profileId, proxy);
                     if (settled) {
-                        pool.release(url);
+                        pool.release(url, proxy);
                         return;
                     }
                     pooledRef = pooled;
@@ -402,7 +423,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                         return;
                     }
                     settled = true;
-                    pool.release(url);
+                    pool.release(url, proxy);
                     resolve(response);
                 } catch (err) {
                     finishWithError(ensureFetchError(err, { url: target }));
