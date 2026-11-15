@@ -168,6 +168,49 @@ describe("profileToTlsConfig", () => {
         expect(cfg.cipherSuites).toEqual(["TLS_AES_256_GCM_SHA384"]);
         expect(cfg.keyShareGroups).toEqual(["x25519", "secp256r1"]);
     });
+
+    it("forwards keyShareAdvertisedGroups as supportedGroups (chrome-140, real profiles 0.2.4)", () => {
+        // Chrome advertises secp256r1+secp384r1 in supported_groups while
+        // key-sharing only X25519MLKEM768+x25519. Forwarding the superset
+        // restores Chrome's advertised groups (JA3 curve segment
+        // 23-24-29-4588); before this fix the wire only carried the shared
+        // groups (29-4588) — a JA3-visible divergence.
+        const cfg = profileToTlsConfig(ChromeProfiles.chrome140, "example.com");
+        expect(cfg.supportedGroups).toEqual([
+            "X25519MLKEM768",
+            "x25519",
+            "secp256r1",
+            "secp384r1",
+        ]);
+        // The shared key-share groups remain the strict subset.
+        expect(cfg.keyShareGroups).toEqual(["X25519MLKEM768", "x25519"]);
+    });
+
+    it("omits supportedGroups when the profile lacks keyShareAdvertisedGroups", () => {
+        // Absent → omit → the TLS layer derives supported_groups from the
+        // key-share groups (pre-0.2.4 behavior, backwards compatible).
+        const cfg = profileToTlsConfig(makeProfile(), "example.com");
+        expect(cfg.supportedGroups).toBeUndefined();
+    });
+
+    it("omits supportedGroups for shipped profiles that do not declare it (firefox-128, safari-17)", () => {
+        expect(profileToTlsConfig(FirefoxProfiles.firefox128, "h").supportedGroups).toBeUndefined();
+        expect(profileToTlsConfig(SafariProfiles.safari17, "h").supportedGroups).toBeUndefined();
+    });
+
+    it("rejects an invalid advertised group with FetchError (same validation as key shares)", () => {
+        const profile = makeProfile();
+        profile.tls = {
+            ...profile.tls,
+            keyShareAdvertisedGroups: ["x25519", "brainpool"],
+        };
+        expect(() => profileToTlsConfig(profile, "h")).toThrow(FetchError);
+        try {
+            profileToTlsConfig(profile, "h");
+        } catch (err) {
+            expect((err as FetchError).message).toContain("key-share group");
+        }
+    });
 });
 
 describe("profileHttp2Settings", () => {

@@ -176,11 +176,23 @@ function validateSupportedVersions(versions: readonly string[]): readonly Protoc
  * expects; an invalid value surfaces as a {@link FetchError}. Version and
  * extension filtering apply client-side policy (TLS 1.3 only, no ECH) before
  * the config reaches the wire.
+ *
+ * `keyShareAdvertisedGroups` (profiles 0.2.4+) is forwarded as
+ * `supportedGroups` when present: real Chrome advertises secp256r1+secp384r1
+ * in supported_groups while sharing only X25519MLKEM768+x25519 in key_share —
+ * omitting the superset made the JA3 curve segment diverge from real Chrome.
+ * Absent → field omitted → the TLS layer derives supported_groups from the
+ * key-share groups (pre-0.2.4 behavior, backwards compatible).
  */
 export function profileToTlsConfig(profile: BrowserProfile, serverName: string) {
     return {
         cipherSuites: profile.tls.cipherSuites.map(asCipherSuite),
         keyShareGroups: profile.tls.keyShareGroups.map(asNamedGroup),
+        ...(profile.tls.keyShareAdvertisedGroups === undefined
+            ? {}
+            : {
+                  supportedGroups: profile.tls.keyShareAdvertisedGroups.map(asNamedGroup),
+              }),
         signatureAlgorithms: profile.tls.signatureAlgorithms.map(asSignatureScheme),
         supportedVersions: validateSupportedVersions(profile.tls.supportedVersions),
         extensionOrder: profile.tls.extensionOrder,
