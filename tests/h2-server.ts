@@ -23,8 +23,8 @@ import { EventEmitter } from "node:events";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
 import {
     FRAME_HEADER_LENGTH,
+    HpackEncoder,
     decodeHeaders,
-    encodeHeaders,
     parseFrame,
     parseFrameHeader,
     serializeFrame,
@@ -50,11 +50,17 @@ export interface H2FakeRequest {
 export interface H2FakeResponse {
     readonly status: number;
     readonly headers?: Readonly<Record<string, string>>;
+    /**
+     * Extra `set-cookie` fields — encoded as SEPARATE literals in the HEADERS
+     * block (RFC 9113 §8.2.3 forbids joining Set-Cookie on h2). A `Map` cannot
+     * carry duplicate names, so the multi-cookie wire shape needs this list.
+     */
+    readonly setCookie?: readonly string[];
     readonly body?: Uint8Array | string;
 }
 
 /** A duplex in-memory transport (same model as the test's FakeTransport). */
-class H2FakeTransport extends EventEmitter implements Transport {
+export class H2FakeTransport extends EventEmitter implements Transport {
     public readonly id: TransportId;
     private _state: TransportState = { state: "open" };
     private _peer: H2FakeTransport | undefined;
@@ -369,12 +375,15 @@ export class FakeHttp2Server {
                 : typeof resp.body === "string"
                   ? new TextEncoder().encode(resp.body)
                   : resp.body;
-        const headers = new Map<string, string>();
-        headers.set(":status", String(resp.status));
+        // Ordered pair list instead of a Map: repeated field names (multi
+        // Set-Cookie) must survive as separate literals in the HPACK block.
+        const pairs: Array<[string, string]> = [[":status", String(resp.status)]];
         if (resp.headers !== undefined) {
-            for (const [k, v] of Object.entries(resp.headers)) headers.set(k, v);
+            for (const [k, v] of Object.entries(resp.headers)) pairs.push([k, v]);
         }
-        const payload = encodeHeaders(headers);
+        for (const raw of resp.setCookie ?? []) pairs.push(["set-cookie", raw]);
+        const encoder = new HpackEncoder({ useHuffman: true });
+        const payload = encoder.encode(pairs.map(([name, value]) => ({ name, value, indexing: false })));
         // Response HEADERS with END_HEADERS (no END_STREAM — body follows).
         this.writeFrame({
             type: 0x1,

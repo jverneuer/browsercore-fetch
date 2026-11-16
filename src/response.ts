@@ -4,28 +4,18 @@
  * Owns the bridge from a decoded HTTP response (status, headers, raw bytes) to
  * the public {@link FetchResponse} shape: header-map projection, content-encoding
  * decompression, and the once-consumable body with `clone()`.
+ *
+ * The protocol layers hand over containers that carry BOTH views over the same
+ * wire data — a flat last-wins `ReadonlyMap` and `getHeaderValues` (http1's
+ * `ParsedHeaders`, http2's `DecodedHeaders`). {@link buildResponse} keeps that
+ * container on the response so the multi-value view survives the projection
+ * onto the flat record.
  */
 
 import type { CompressionProvider, ContentEncoding } from "@browsercore/contracts";
 import type { HttpBodyKind } from "@browsercore/http1";
 import { FetchError } from "./errors.js";
-import type { FetchResponse } from "./types.js";
-
-/** Read all values for a (case-insensitive) header name from a response header map. */
-function readHeaderValues(headers: ReadonlyMap<string, string>, name: string): string[] {
-    const out: string[] = [];
-    for (const [key, value] of headers) {
-        if (key.toLowerCase() === name) {
-            out.push(value);
-        }
-    }
-    return out;
-}
-
-/** Read a `Set-Cookie` header (or multiple) from a response header map. */
-export function readSetCookie(headers: ReadonlyMap<string, string>): string[] {
-    return readHeaderValues(headers, "set-cookie");
-}
+import type { FetchResponse, MultiValueHeaders } from "./types.js";
 
 /** Read the `content-encoding` header (case-insensitive) from a response header map. */
 export function readContentEncoding(headers: ReadonlyMap<string, string>): ContentEncoding | undefined {
@@ -76,7 +66,7 @@ export function buildResponse(
     url: string,
     statusCode: number,
     statusText: string,
-    headers: ReadonlyMap<string, string>,
+    headers: MultiValueHeaders,
     rawBody: Uint8Array,
     encoding: ContentEncoding | undefined,
     compression: CompressionProvider | undefined,
@@ -108,6 +98,15 @@ export function buildResponse(
         get bodyUsed(): boolean {
             return consumed;
         },
+        // The source container (ParsedHeaders / DecodedHeaders) is immutable
+        // and already owns the wire-order fidelity view — delegate to it
+        // instead of re-deriving, so both views can never diverge.
+        getHeaderValues(name: string): readonly string[] {
+            return headers.getHeaderValues(name);
+        },
+        getSetCookie(): readonly string[] {
+            return headers.getHeaderValues("set-cookie");
+        },
         body: consume,
         async json(): Promise<unknown> {
             const bytes = await consume();
@@ -120,7 +119,8 @@ export function buildResponse(
         },
         clone(): FetchResponse {
             // A clone re-derives from the original bytes with its own
-            // `consumed` flag, so each copy can be read independently.
+            // `consumed` flag, so each copy can be read independently. The
+            // header container is immutable, so sharing it is safe.
             return buildResponse(url, statusCode, statusText, headers, rawBody, encoding, compression);
         },
     };

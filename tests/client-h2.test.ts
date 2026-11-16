@@ -42,13 +42,14 @@ vi.mock("@browsercore/profiles", async (importOriginal) => {
 // Import AFTER the mocks are registered.
 // eslint-disable-next-line import/first
 import { createClient } from "../src/client.js";
+import { createCookieJar } from "@browsercore/cookies";
 import { createTestPlatform } from "./helpers/test-platform.js";
 // eslint-disable-next-line import/first
 import { ChromeProfiles, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 // eslint-disable-next-line import/first
 import type { BrowserProfileH2Defaults } from "../src/profile.js";
 // eslint-disable-next-line import/first
-import type { Http2Request } from "@browsercore/http2";
+import { DecodedHeadersImpl, type Http2Request } from "@browsercore/http2";
 
 // createClient requires an injected Platform (its pool throws without an
 // EventProvider). fetch never provides its own; browsersmith is the sole
@@ -63,9 +64,9 @@ describe("client — http2 dispatch path", () => {
             async request() {
                 return {
                     statusCode: 200,
-                    headers: new Map<string, string>([
-                        ["content-type", "text/plain"],
-                        ["set-cookie", "sid=abc; Path=/"],
+                    headers: new DecodedHeadersImpl([
+                        { name: "content-type", value: "text/plain" },
+                        { name: "set-cookie", value: "sid=abc; Path=/" },
                     ]),
                     body: new TextEncoder().encode("h2 body"),
                 };
@@ -103,9 +104,9 @@ describe("client — http2 dispatch path", () => {
             async request() {
                 return {
                     statusCode: 201,
-                    headers: new Map<string, string>([
-                        ["content-type", "application/json"],
-                        ["set-cookie", "token=xyz"],
+                    headers: new DecodedHeadersImpl([
+                        { name: "content-type", value: "application/json" },
+                        { name: "set-cookie", value: "token=xyz" },
                     ]),
                     body: new TextEncoder().encode('{"ok":true}'),
                 };
@@ -128,6 +129,59 @@ describe("client — http2 dispatch path", () => {
             expect(resp.status).toBe(201);
             expect(resp.headers["content-type"]).toBe("application/json");
             expect(await resp.json()).toEqual({ ok: true });
+        } finally {
+            await client.close();
+        }
+    });
+
+    it("getSetCookie() returns both h2 set-cookie literals verbatim and the jar stores both", async () => {
+        const http2Conn = {
+            id: "h2-setcookie-fake",
+            settings: {},
+            async request() {
+                return {
+                    statusCode: 200,
+                    // Two separate set-cookie fields in the decoded block — the
+                    // RFC 9113 §8.2.3 wire shape the flat Map view collapses.
+                    headers: new DecodedHeadersImpl([
+                        { name: "content-type", value: "text/plain" },
+                        { name: "set-cookie", value: "sid=abc; Path=/; HttpOnly" },
+                        {
+                            name: "set-cookie",
+                            value: "theme=dark; Expires=Wed, 13 Jan 2027 07:28:00 GMT; Path=/",
+                        },
+                    ]),
+                    body: new TextEncoder().encode("ok"),
+                };
+            },
+            async goaway() {},
+            async ping() {
+                return 0n;
+            },
+            async close() {},
+        };
+
+        fakePool.getConnection.mockReset();
+        fakePool.getConnection.mockResolvedValue({ protocol: "http2" as const, id: "h2-setcookie-fake", conn: http2Conn });
+        fakePool.release.mockReset();
+        fakePool.drain.mockReset().mockResolvedValue(undefined);
+
+        const jar = createCookieJar();
+        const client = createClient({ platform, cookieJar: jar });
+        try {
+            const resp = await client.fetch("https://example.com/h2");
+            expect(resp.getSetCookie()).toEqual([
+                "sid=abc; Path=/; HttpOnly",
+                "theme=dark; Expires=Wed, 13 Jan 2027 07:28:00 GMT; Path=/",
+            ]);
+            // Flat record stays last-wins for backward compatibility.
+            expect(resp.headers["set-cookie"]).toBe(
+                "theme=dark; Expires=Wed, 13 Jan 2027 07:28:00 GMT; Path=/",
+            );
+            // storeCookies consumes the multi-value view, not the flat record —
+            // both cookies land in the jar.
+            const stored = jar.getCookies({ hostname: "example.com", pathname: "/", protocol: "https:" });
+            expect(stored.map((c) => `${c.name}=${c.value}`)).toEqual(["sid=abc", "theme=dark"]);
         } finally {
             await client.close();
         }
@@ -169,7 +223,7 @@ describe("client — http2 request fidelity (host removal, accept-encoding, prio
                 requests.push(req);
                 return {
                     statusCode: 200,
-                    headers: new Map<string, string>(),
+                    headers: new DecodedHeadersImpl([]),
                     body: new TextEncoder().encode("ok"),
                 };
             },

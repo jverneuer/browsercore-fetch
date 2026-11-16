@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { ParsedHeadersImpl } from "@browsercore/http1";
 import {
     bodyKind,
     buildResponse,
     decompressBody,
     readContentEncoding,
-    readSetCookie,
 } from "../src/response.js";
 import { FetchError } from "../src/errors.js";
 import { compression } from "./helpers/test-compression.js";
@@ -13,22 +13,95 @@ function utf8(s: string): Uint8Array {
     return new TextEncoder().encode(s);
 }
 
-const headers = (entries: Array<[string, string]>): Map<string, string> => new Map(entries);
+/** Build a real http1 `ParsedHeaders` container from ordered wire pairs. */
+const headers = (entries: Array<[string, string]>): ParsedHeadersImpl =>
+    new ParsedHeadersImpl(entries.map(([name, value]) => ({ name, value })));
 
-describe("readSetCookie", () => {
-    it("collects every set-cookie header (case-insensitive name)", () => {
-        const h = headers([
-            ["set-cookie", "a=1"],
-            ["Set-Cookie", "b=2"],
-            ["content-type", "text/html"],
-            ["SET-COOKIE", "c=3"],
-        ]);
-        expect(readSetCookie(h)).toEqual(["a=1", "b=2", "c=3"]);
+describe("buildResponse — getSetCookie", () => {
+    it("exposes every set-cookie value verbatim in wire order (case-insensitive name)", () => {
+        const resp = buildResponse(
+            "https://e.com/x",
+            200,
+            "OK",
+            headers([
+                ["set-cookie", "a=1"],
+                ["Set-Cookie", "b=2"],
+                ["content-type", "text/html"],
+                ["SET-COOKIE", "c=3"],
+            ]),
+            utf8("body"),
+        );
+        expect(resp.getSetCookie()).toEqual(["a=1", "b=2", "c=3"]);
     });
 
-    it("returns an empty array when none present", () => {
-        expect(readSetCookie(headers([["x", "y"]]))).toEqual([]);
-        expect(readSetCookie(new Map())).toEqual([]);
+    it("never comma-joins — a comma-bearing Expires value stays one verbatim entry", () => {
+        const withDate = "theme=dark; Expires=Wed, 13 Jan 2027 07:28:00 GMT; Path=/";
+        const resp = buildResponse(
+            "https://e.com/",
+            200,
+            "OK",
+            headers([
+                ["set-cookie", "sid=abc; Path=/; HttpOnly"],
+                ["set-cookie", withDate],
+            ]),
+            utf8("body"),
+        );
+        expect(resp.getSetCookie()).toEqual(["sid=abc; Path=/; HttpOnly", withDate]);
+    });
+
+    it("returns an empty array when no set-cookie is present", () => {
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([["x", "y"]]), utf8("body"));
+        expect(resp.getSetCookie()).toEqual([]);
+    });
+});
+
+describe("buildResponse — getHeaderValues", () => {
+    it("returns every value of a repeated field in wire order, case-insensitively", () => {
+        const resp = buildResponse(
+            "https://e.com/",
+            200,
+            "OK",
+            headers([
+                ["x-tag", "one"],
+                ["content-type", "text/plain"],
+                ["X-TAG", "two"],
+            ]),
+            utf8("body"),
+        );
+        expect(resp.getHeaderValues("x-tag")).toEqual(["one", "two"]);
+        expect(resp.getHeaderValues("X-Tag")).toEqual(["one", "two"]);
+        expect(resp.getHeaderValues("x-missing")).toEqual([]);
+    });
+
+    it("keeps the flat headers record last-wins (compat) while the fidelity view sees both", () => {
+        const resp = buildResponse(
+            "https://e.com/",
+            200,
+            "OK",
+            headers([
+                ["set-cookie", "first=1"],
+                ["set-cookie", "second=2"],
+            ]),
+            utf8("body"),
+        );
+        expect(resp.headers["set-cookie"]).toBe("second=2");
+        expect(resp.getSetCookie()).toEqual(["first=1", "second=2"]);
+    });
+
+    it("clone() preserves the multi-value view", () => {
+        const resp = buildResponse(
+            "https://e.com/",
+            200,
+            "OK",
+            headers([
+                ["set-cookie", "a=1"],
+                ["set-cookie", "b=2"],
+            ]),
+            utf8("once"),
+        );
+        const copy = resp.clone();
+        expect(copy.getSetCookie()).toEqual(["a=1", "b=2"]);
+        expect(copy.getHeaderValues("set-cookie")).toEqual(["a=1", "b=2"]);
     });
 });
 

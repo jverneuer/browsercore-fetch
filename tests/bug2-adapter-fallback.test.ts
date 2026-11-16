@@ -24,6 +24,7 @@ import { EventEmitter } from "node:events";
 import type { Net, DnsResolver, EventProvider, Platform } from "@browsercore/contracts";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
+import { ParsedHeadersImpl } from "@browsercore/http1";
 import type {
     Http1Connection,
     Http1ConnectionId,
@@ -147,7 +148,9 @@ function fakeHttp1Conn(): Http1Connection {
         return {
             statusCode: 200,
             statusText: "OK",
-            headers: new Map(req.headers),
+            // A real ParsedHeaders container: storeCookies reads the response's
+            // multi-value view, which a plain Map cannot answer.
+            headers: new ParsedHeadersImpl(Array.from(req.headers, ([name, value]) => ({ name, value }))),
             body: new Uint8Array(0),
         };
     });
