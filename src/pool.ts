@@ -17,6 +17,13 @@
  * aborted request can force-close the transport directly (the connection's own
  * graceful `close()` blocks on in-flight requests, which would deadlock against
  * a peer that never replies).
+ *
+ * Server-initiated closes are evicted immediately: the pool subscribes to the
+ * tracked transport's `close` event, and a close while the entry is still
+ * pooled (the server or its LB dropped an idle connection) removes that entry,
+ * so the next request dials fresh instead of failing on a dead connection.
+ * A take whose transport is already dead (close event not yet processed)
+ * discards the entry and redials transparently within the same take.
  */
 
 import type { Transport } from "@browsercore/transport";
@@ -111,6 +118,15 @@ export interface ConnectionPool {
     drain(): Promise<void>;
 }
 
+/**
+ * Whether a tracked transport is still usable. A pooled entry's transport is
+ * `"open"` while healthy; `"closed"` (remote close, error, timeout) or
+ * `"closing"` means the entry is dead and must not be handed out.
+ */
+function isTransportOpen(transport: Transport | undefined): boolean {
+    return transport !== undefined && transport.state.state === "open";
+}
+
 /** Close a single pooled connection (protocol-aware), ignoring errors. */
 async function closePooled(pooled: PooledConnection): Promise<void> {
     switch (pooled.protocol) {
@@ -201,6 +217,45 @@ export function createPool(
     }
 
     /**
+     * Drop a dead pool entry: clear its idle timer and remove the entry +
+     * its tracked transport, guarded by identity so a late trigger can never
+     * remove a NEWER entry re-established under the same key. Two triggers:
+     * the transport `close` watcher (server-initiated close while pooled) and
+     * the take path (entry found dead at getConnection time).
+     *
+     * The protocol connection is deliberately NOT closed here: its transport
+     * already died (the protocol layer tears itself down on transport close),
+     * and a graceful close() would block on in-flight requests we want to
+     * fail fast. Dropping the entry makes it unreachable; GC reclaims it once
+     * any in-flight dispatch has settled.
+     */
+    function discardDeadEntry(key: PoolKey, transport: Transport | undefined, pooled: PooledConnection): void {
+        clearIdleTimer(key);
+        if (poolTransports.get(key) === transport) {
+            poolTransports.delete(key);
+        }
+        if (pool.get(key) === pooled) {
+            pool.delete(key);
+        }
+    }
+
+    /**
+     * Evict an entry whose transport closed. This is the server-initiated
+     * close path (LB idle timeout, h2 GOAWAY followed by FIN, RST): the close
+     * fires while the entry is still pooled and no request of ours is in
+     * flight to notice, so without this watcher the dead entry survives until
+     * the next request takes it and fails. Client-initiated closes (idle
+     * eviction, teardown, drain) delete the entry BEFORE their close event
+     * fires — the identity guard in {@link discardDeadEntry} turns those
+     * events into no-ops, leaving their semantics unchanged.
+     */
+    function watchTransportClose(key: PoolKey, transport: Transport, pooled: PooledConnection): void {
+        transport.on("close", () => {
+            discardDeadEntry(key, transport, pooled);
+        });
+    }
+
+    /**
      * Establish + pool a new connection, returning it. The transport is opened
      * exactly once and reused for both the protocol handshake and the
      * pool's own transport map (so teardown can force-close the same socket).
@@ -267,6 +322,10 @@ export function createPool(
         }
         poolTransports.set(key, transport);
         pool.set(key, pooled);
+        // The tracked transport is the bottom of this entry's stack (raw TCP,
+        // tunneled proxy stream, or the test-seam factory transport) — the
+        // layer that observes the server closing the socket.
+        watchTransportClose(key, transport, pooled);
         startIdleTimer(key);
         return pooled;
     }
@@ -275,11 +334,21 @@ export function createPool(
         async getConnection(url, profileId, proxy): Promise<PooledConnection> {
             const key = poolKey(url, proxy);
             const existing = pool.get(key);
-            if (existing) {
-                // The connection is now in use — stop its idle TTL so it is not
-                // evicted mid-request. It is restarted when returned to the pool.
-                clearIdleTimer(key);
-                return existing;
+            if (existing !== undefined) {
+                const transport = poolTransports.get(key);
+                if (isTransportOpen(transport)) {
+                    // The connection is now in use — stop its idle TTL so it is not
+                    // evicted mid-request. It is restarted when returned to the pool.
+                    clearIdleTimer(key);
+                    return existing;
+                }
+                // Dead entry: the server closed the connection between release
+                // and this take and the close event has not been processed yet
+                // (or was lost). Discard it and dial fresh below — the caller
+                // gets one transparent redial inside the SAME take and never
+                // sees the dead connection. No await has run since the pool.get
+                // above, so this discard cannot race another pool mutation.
+                discardDeadEntry(key, transport, existing);
             }
             const profile = profileId ? (lookupProfile(profileId) ?? fallbackProfile) : fallbackProfile;
             const pooled = await establishAndStore(url, profile, proxy);
