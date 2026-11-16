@@ -65,6 +65,16 @@ try {
 }
 ```
 
+### Connection pooling
+
+Connections are pooled per origin (host:port) and reused across requests. A
+connection unused for `idleTimeoutMs` (default 30 000, `0` disables) is closed
+and evicted. Connections the SERVER closes while pooled (LB idle timeouts,
+GOAWAY, FINs) are evicted the moment the transport reports the close; a request
+that would otherwise take an already-dead connection redials transparently
+within the same request. Client-initiated closes (`client.close()`) and idle
+eviction are unaffected.
+
 ### Proxied requests
 
 Every request (or a whole client, via `FetchClientOptions.proxy`) can be
