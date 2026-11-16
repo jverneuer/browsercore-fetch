@@ -8,15 +8,25 @@
  */
 
 import type { CookieUrl } from "@browsercore/cookies";
+import type { ProxyConfig } from "@browsercore/proxy";
 import { FetchError } from "./errors.js";
+import { proxyIdentity } from "./proxy.js";
 import type { ParsedUrl } from "./types.js";
 
-/** Branded pool key — host:port is the origin identity for connection reuse. */
+/**
+ * Branded pool key — the identity a pooled connection is reused under:
+ * origin `host:port`, plus the proxy identity when the connection is tunneled.
+ * Two requests to the same origin through different proxies (or with
+ * different credentials) get different keys and never share a connection.
+ */
 export type PoolKey = string & { __brand: "PoolKey" };
 
-/** Build the connection-pool key for a parsed URL (origin identity). */
-export function poolKey(url: ParsedUrl): PoolKey {
-    return `${url.host}:${url.port}` as PoolKey;
+/** Build the connection-pool key for a parsed URL and optional proxy. */
+export function poolKey(url: ParsedUrl, proxy?: ProxyConfig): PoolKey {
+    if (proxy === undefined) {
+        return `${url.host}:${url.port}` as PoolKey;
+    }
+    return `${url.host}:${url.port}|via:${proxyIdentity(proxy)}` as PoolKey;
 }
 
 /** Pick the default port for a scheme. */

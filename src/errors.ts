@@ -10,6 +10,7 @@
  * `ensureFetchError` wrapper for narrowing caught values.
  */
 
+import { ProxyError } from "@browsercore/proxy";
 import type { FetchRequestId } from "./types.js";
 
 /** Arbitrary structured detail carried alongside a fetch error message. */
@@ -112,6 +113,61 @@ export class AbortError extends FetchError {
         super(message, { ...options, details: { reason: "aborted" } });
         this.name = "AbortError";
     }
+}
+
+/**
+ * A proxy tunnel failed while establishing the connection.
+ *
+ * Wraps the typed error hierarchy of `@browsercore/proxy` at the dial
+ * boundary so callers match on fetch's own classes while the original
+ * `kind` survives on {@link FetchProxyError.proxyKind} — no need to import
+ * the proxy package to distinguish auth failures from tunnel refusals.
+ * The original error is preserved as `cause` for full details.
+ */
+export class FetchProxyError extends FetchError {
+    public override readonly kind = "FetchProxyError" as const;
+    /**
+     * Kind of the wrapped proxy error — one of `"ProxyError"`,
+     * `"ProxyAuthError"`, `"ProxyTunnelError"`, `"ProxyHandshakeError"`,
+     * `"ProxyConfigError"` — preserved verbatim for matching.
+     */
+    public readonly proxyKind: string;
+
+    constructor(
+        message: string,
+        options: {
+            proxyKind: string;
+            details?: FetchErrorDetails;
+            cause?: Error;
+            url?: string;
+            requestId?: FetchRequestId;
+        },
+    ) {
+        super(message, options);
+        this.name = "FetchProxyError";
+        this.proxyKind = options.proxyKind;
+    }
+}
+
+/**
+ * Wrap a `@browsercore/proxy` error into the fetch hierarchy; anything else
+ * passes through unchanged.
+ *
+ * Called at the proxied-dial boundary: a `ProxyError` (or subclass) becomes a
+ * {@link FetchProxyError} carrying the original `kind`/`details` and the
+ * original error as `cause`; non-proxy errors are returned as-is so the
+ * generic {@link ensureFetchError} path handles them.
+ */
+export function wrapProxyError(e: unknown, options?: { url?: string }): unknown {
+    if (e instanceof ProxyError) {
+        return new FetchProxyError(e.message, {
+            proxyKind: e.kind,
+            details: e.details,
+            cause: e,
+            ...(options?.url === undefined ? {} : { url: options.url }),
+        });
+    }
+    return e;
 }
 
 /**

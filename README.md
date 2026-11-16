@@ -65,6 +65,25 @@ try {
 }
 ```
 
+### Proxied requests
+
+Every request (or a whole client, via `FetchClientOptions.proxy`) can be
+tunneled through an HTTP CONNECT or SOCKS5/5h proxy via `@browsercore/proxy`.
+Proxied connections are pooled per origin+proxy pair — different proxies never
+share a connection — and proxy failures surface as `FetchProxyError` with the
+wrapped `kind` preserved on `proxyKind`.
+
+```ts
+const client = createClient({
+    platform,
+    proxy: { scheme: "socks5h", host: "127.0.0.1", port: 1080 }, // client default
+});
+// Per-request proxy replaces the client default:
+const r = await client.fetch("https://example.com", {
+    proxy: { scheme: "http", host: "127.0.0.1", port: 8080 },
+});
+```
+
 ## Types
 
 | Export | Kind | Purpose |
@@ -81,13 +100,15 @@ try {
 | `FetchTimeoutError` | class | Request exceeded timeout |
 | `RedirectError` | class | Redirect loop / limit exceeded |
 | `ProtocolError` | class | ALPN negotiation failure |
+| `FetchProxyError` | class | Proxy tunnel failure (wrapped proxy `kind` on `proxyKind`) |
 | `AbortError` | class | Request aborted via AbortSignal |
+| `ProxyConfig` / `ProxyScheme` | type re-export | Proxy endpoint shape (from `@browsercore/proxy`) |
 
 ## Dependency graph
 
 ```
 @browsercore/fetch
-  └─ @browsercore/http2  @browsercore/http1  @browsercore/cookies  @browsercore/profiles
+  └─ @browsercore/http2  @browsercore/http1  @browsercore/cookies  @browsercore/profiles  @browsercore/proxy
         └─ @browsercore/tls
               └─ @browsercore/crypto  @browsercore/compression  @browsercore/transport
                     └─ node:net / node:crypto / node:zlib

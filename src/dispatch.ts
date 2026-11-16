@@ -13,6 +13,7 @@
 import { connect as connectTransport, type Transport } from "@browsercore/transport";
 import type { CompressionProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
 import type { CryptoProvider } from "@browsercore/crypto";
+import { connectViaProxy, type ProxyConfig } from "@browsercore/proxy";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
@@ -24,7 +25,8 @@ import {
 } from "@browsercore/http1";
 import { connectHttp2, type Http2Connection, type Http2Options } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
-import { FetchError } from "./errors.js";
+import { FetchError, wrapProxyError } from "./errors.js";
+import { proxyDialPlatform } from "./proxy.js";
 import {
     ALPN_PROTOCOLS,
     profileHttp2Config,
@@ -277,4 +279,50 @@ export function openTcpTransport(url: ParsedUrl, net: Net | undefined, dns: DnsR
         );
     }
     return connectTransport({ host: url.host, port: url.port, net, dns, events });
+}
+
+/**
+ * Open a transport to the parsed URL's host/port THROUGH a proxy.
+ *
+ * Dials the PROXY's host:port via the platform net adapter and lets
+ * `connectViaProxy` run the scheme-appropriate tunnel (HTTP CONNECT, or
+ * SOCKS5 with client-side DNS; SOCKS5h resolves on the proxy, so the origin
+ * hostname is never resolved locally). The returned transport is the tunneled
+ * stream — TLS layers over it end-to-end with the origin.
+ *
+ * Unlike {@link openTcpTransport} no `dns` is required up front: only the
+ * `socks5` scheme resolves client-side, and the proxy dialer raises its own
+ * typed error (mapped below) when a resolver it needs is absent. Proxy
+ * failures are wrapped into {@link FetchProxyError} at this boundary with the
+ * original `kind` preserved; other errors propagate unchanged.
+ */
+export async function openProxiedTransport(
+    url: ParsedUrl,
+    proxy: ProxyConfig,
+    net: Net | undefined,
+    dns: DnsResolver | undefined,
+): Promise<Transport> {
+    if (net === undefined) {
+        throw new FetchError(
+            "openProxiedTransport requires a net adapter. " +
+                "Pass a Platform through FetchClientOptions so it flows down.",
+        );
+    }
+    try {
+        const tunneled = await connectViaProxy(
+            proxy,
+            { host: url.host, port: url.port },
+            proxyDialPlatform(net, dns),
+        );
+        // @browsercore/proxy speaks contracts' Transport (literal-event
+        // on/once); this package's dial path speaks @browsercore/transport's
+        // Transport (EventProvider-shaped). The surfaces are incompatible at
+        // the type level but compatible where it matters at runtime: the
+        // tunneled stream only needs the tls layer's read/write/close, and
+        // the socket transport additionally implements on/once for the exact
+        // literal events http1 subscribes to. Single documented cast.
+        return tunneled as unknown as Transport;
+    } catch (err) {
+        throw wrapProxyError(err, { url: originString(url) });
+    }
 }

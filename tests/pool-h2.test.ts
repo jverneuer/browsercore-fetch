@@ -32,6 +32,7 @@ vi.mock("../src/dispatch.js", () => ({
         id: "h2-pool-test",
         conn: { id: "h2-pool-test", close: h2Closed },
     }),
+    openProxiedTransport: vi.fn(),
     openTcpTransport: vi.fn(),
 }));
 
@@ -44,6 +45,7 @@ import { parseUrl } from "../src/url.js";
 import {
     establishConnection,
     establishHttp1OverTransport,
+    openProxiedTransport,
     openTcpTransport,
 } from "../src/dispatch.js";
 import type { ParsedUrl } from "../src/types.js";
@@ -241,5 +243,55 @@ describe("pool — production path (real net/dns)", () => {
             openTcpTransport.mockReset();
             establishConnection.mockReset();
         }
+    });
+});
+
+describe("pool — proxied production path (real dial + TLS over the tunnel)", () => {
+    const proxy = { scheme: "http" as const, host: "proxy.example", port: 8080 };
+
+    it("dials via openProxiedTransport and establishes TLS over the TUNNELED transport", async () => {
+        const tunneled = new StubTransport("tunneled");
+        const proxiedClosed = vi.fn();
+        openProxiedTransport.mockResolvedValueOnce(tunneled);
+        establishConnection.mockResolvedValueOnce({
+            protocol: "http1" as const,
+            id: "proxied-conn",
+            conn: { id: "proxied-conn", close: proxiedClosed },
+        });
+
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        const crypto = { randomBytes: vi.fn() } as never;
+        const pool = createPool({ net, dns, crypto }, lookup, fallbackProfile());
+        try {
+            const target = url("https://example.com/");
+            const conn = await pool.getConnection(target, undefined, proxy);
+            expect(conn.protocol).toBe("http1");
+            // The proxy dialer received the url, proxy, net, dns — and NOT the
+            // events provider (the proxy dial path consumes none).
+            expect(openProxiedTransport).toHaveBeenCalledTimes(1);
+            expect(openProxiedTransport).toHaveBeenCalledWith(target, proxy, net, dns);
+            // TLS was established OVER the tunneled transport with the ORIGIN
+            // as serverName — the tunnel is transparent to the TLS layer.
+            expect(establishConnection).toHaveBeenCalledTimes(1);
+            expect(establishConnection.mock.calls[0]?.[0]).toBe(tunneled);
+            expect(establishConnection.mock.calls[0]?.[2]).toBe("example.com");
+            await pool.drain();
+            expect(proxiedClosed).toHaveBeenCalledTimes(1);
+        } finally {
+            openProxiedTransport.mockReset();
+            establishConnection.mockReset();
+        }
+    });
+
+    it("throws a clear error when crypto is missing on the proxied path", async () => {
+        openProxiedTransport.mockResolvedValueOnce(new StubTransport("tunneled"));
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        const pool = createPool({ net, dns }, lookup, fallbackProfile());
+        await expect(pool.getConnection(url("https://example.com/"), undefined, proxy)).rejects.toThrow(
+            "crypto provider",
+        );
+        openProxiedTransport.mockReset();
     });
 });

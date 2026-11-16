@@ -11,6 +11,7 @@ export type { FetchClient, FetchClientOptions } from "./client.js";
 
 export {
     FetchError,
+    FetchProxyError,
     FetchTimeoutError,
     ProtocolError,
     RedirectError,
@@ -24,6 +25,10 @@ export type {
     ParsedUrl,
     RedirectPolicy,
 } from "./types.js";
+
+// The proxy types FetchOptions/FetchClientOptions speak in — re-exported so
+// consumers configure `proxy` without depending on @browsercore/proxy directly.
+export type { ProxyConfig, ProxyScheme } from "@browsercore/proxy";
 
 export { assertNever } from "./utils.js";
 
