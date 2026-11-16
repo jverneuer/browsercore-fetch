@@ -57,6 +57,22 @@ export interface FetchOptions {
     readonly signal?: AbortSignal;
 }
 
+/**
+ * Structural view of the response-header container a protocol layer hands to
+ * fetch. http1's `ParsedHeaders` and http2's `DecodedHeaders` share this exact
+ * shape: a flat last-wins `ReadonlyMap` (the backward-compatible view) plus a
+ * multi-value reader. {@link FetchResponse} retains the container so the
+ * multi-value view survives the projection onto the flat `headers` record.
+ */
+export interface MultiValueHeaders extends ReadonlyMap<string, string> {
+    /**
+     * All values for a field, in wire order — each header line's value
+     * verbatim as a separate entry, never comma-joined. Empty array when the
+     * field is absent. Field name is matched case-insensitively.
+     */
+    getHeaderValues(name: string): readonly string[];
+}
+
 /** A decoded Fetch response. Body can be consumed once. */
 export interface FetchResponse {
     /** Final URL after redirects. */
@@ -65,10 +81,32 @@ export interface FetchResponse {
     readonly status: number;
     /** HTTP status text (e.g. "OK"). */
     readonly statusText: string;
-    /** Response headers (lowercased names). */
+    /** Response headers (lowercased names). Last-wins for repeated fields. */
     readonly headers: Readonly<Record<string, string>>;
     /** Whether the body has been consumed. */
     readonly bodyUsed: boolean;
+
+    /**
+     * All values for a response header field of the FINAL response, in wire
+     * order — each header line's value verbatim as a separate entry, never
+     * comma-joined. Empty array when the field is absent. The field name is
+     * matched case-insensitively.
+     *
+     * The flat {@link headers} record collapses repeated fields (last-wins,
+     * kept for backward compatibility); this is the fidelity view that
+     * surfaces every value. Repeated fields must not be folded: `Set-Cookie`
+     * values routinely contain dates and other commas (RFC 6265bis requires
+     * recipients to handle each field individually; RFC 9113 §8.2.3 forbids
+     * joining Set-Cookie on h2).
+     */
+    getHeaderValues(name: string): readonly string[];
+    /**
+     * Every `Set-Cookie` value of the FINAL response, in wire order,
+     * verbatim (never joined — the values contain commas). Empty array when
+     * the response carried no `Set-Cookie`. WHATWG semantics: only the final
+     * response of a redirect chain is exposed here.
+     */
+    getSetCookie(): readonly string[];
 
     /** Consume the body as raw bytes. Rejects if called twice. */
     body(): Promise<Uint8Array>;

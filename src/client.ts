@@ -40,7 +40,6 @@ import {
     profileHttp1Config,
 } from "./profile.js";
 import { METHODS_PRESERVED_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
-import { readSetCookie } from "./response.js";
 import { assertNever, createId } from "./utils.js";
 import { cookieUrl, defaultPort, originString, parseUrl, requestTarget, resolveRedirectUrl } from "./url.js";
 import type {
@@ -250,9 +249,9 @@ function applyCookies(headers: Map<string, string>, jar: CookieJar, url: ParsedU
     headers.set("cookie", cookies.map((c) => `${c.name}=${c.value}`).join("; "));
 }
 
-/** Store response Set-Cookie headers into the jar. */
-function storeCookies(jar: CookieJar, headers: ReadonlyMap<string, string>, url: ParsedUrl): void {
-    for (const raw of readSetCookie(headers)) {
+/** Store response Set-Cookie values into the jar. */
+function storeCookies(jar: CookieJar, response: FetchResponse, url: ParsedUrl): void {
+    for (const raw of response.getSetCookie()) {
         try {
             jar.setCookie(raw, cookieUrl(url));
         } catch (err) {
@@ -409,11 +408,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                         default:
                             assertNever(pooled);
                     }
-                    const responseHeaders = new Map<string, string>();
-                    for (const [k, v] of Object.entries(response.headers)) {
-                        responseHeaders.set(k, v);
-                    }
-                    storeCookies(jar, responseHeaders, url);
+                    storeCookies(jar, response, url);
                     // Unreachable: once dispatch resolves, this continuation runs
                     // as a single microtask through storeCookies + the check +
                     // resolve, so a timeout/abort (macrotask) cannot interleave

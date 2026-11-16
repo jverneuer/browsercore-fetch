@@ -4,6 +4,7 @@ import type { Net, DnsResolver } from "@browsercore/contracts";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
 import { ChromeProfiles } from "@browsercore/profiles";
 import { createClient } from "../src/client.js";
+import { createCookieJar } from "@browsercore/cookies";
 import { RedirectError } from "../src/errors.js";
 import { stubEvents } from "./helpers/test-platform.js";
 
@@ -27,6 +28,12 @@ interface FakeResponse {
     readonly status: number;
     readonly statusText?: string;
     readonly headers?: Readonly<Record<string, string>>;
+    /**
+     * Extra `set-cookie` header lines — emitted as separate lines on the wire
+     * (RFC 6265bis: each Set-Cookie field is handled individually; a Record
+     * literal cannot carry the duplicate name).
+     */
+    readonly setCookie?: readonly string[];
     readonly body?: Uint8Array | string;
 }
 
@@ -160,6 +167,7 @@ function serializeResponse(resp: FakeResponse): Uint8Array {
     }
     let text = `HTTP/1.1 ${resp.status} ${resp.statusText ?? ""}\r\n`;
     for (const [k, v] of Object.entries(headers)) text += `${k}: ${v}\r\n`;
+    for (const raw of resp.setCookie ?? []) text += `set-cookie: ${raw}\r\n`;
     text += "\r\n";
     const headerBytes = new TextEncoder().encode(text);
     const out = new Uint8Array(headerBytes.length + bodyBytes.length);
@@ -897,6 +905,157 @@ describe("client — RedirectError location omitted when Location header is abse
             expect(caught).toBeInstanceOf(RedirectError);
             expect(caught?.message).toContain("redirect limit exceeded");
             expect(caught?.location).toBeUndefined();
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// FetchResponse.getSetCookie() — multi-value Set-Cookie fidelity over the
+// http/1.1 wire. Two set-cookie lines must survive as two verbatim entries
+// (the flat headers record stays last-wins); the jar stores every cookie.
+// ---------------------------------------------------------------------------
+
+describe("client — FetchResponse.getSetCookie() (http/1.1)", () => {
+    const COMMA_DATE = "Expires=Wed, 13 Jan 2027 07:28:00 GMT";
+
+    it("returns both set-cookie lines verbatim in wire order (comma-bearing date intact)", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            setCookie: [
+                "sid=abc; Path=/; HttpOnly",
+                `theme=dark; ${COMMA_DATE}; Path=/`,
+            ],
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory, events });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.getSetCookie()).toEqual([
+                "sid=abc; Path=/; HttpOnly",
+                `theme=dark; ${COMMA_DATE}; Path=/`,
+            ]);
+            // Never comma-joined: the date's comma would corrupt a folded value.
+            expect(resp.getSetCookie()).toHaveLength(2);
+            // Flat headers record keeps its last-wins backward compatibility.
+            expect(resp.headers["set-cookie"]).toBe(`theme=dark; ${COMMA_DATE}; Path=/`);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("returns an empty array when the response carries no set-cookie", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "text/plain" },
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory, events });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.getSetCookie()).toEqual([]);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("getHeaderValues() answers case-insensitively on the same response", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            setCookie: ["a=1", "b=2"],
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory, events });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            expect(resp.getHeaderValues("SET-COOKIE")).toEqual(["a=1", "b=2"]);
+            expect(resp.getHeaderValues("x-absent")).toEqual([]);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("exposes only the FINAL response's cookies after a redirect; the jar records every hop", async () => {
+        const { factory, close } = installBackend((req) => {
+            if (req.url === "/start") {
+                return {
+                    status: 302,
+                    headers: { location: "/final" },
+                    setCookie: ["hop=1; Path=/"],
+                    body: "",
+                };
+            }
+            return {
+                status: 200,
+                statusText: "OK",
+                setCookie: ["final=2; Path=/"],
+                body: "ok",
+            };
+        });
+        const jar = createCookieJar();
+        const client = createClient({ transportFactory: factory, events, cookieJar: jar });
+        try {
+            const resp = await client.fetch("http://example.com/start");
+            // WHATWG semantics: the response API shows the final response only.
+            expect(resp.getSetCookie()).toEqual(["final=2; Path=/"]);
+            // The jar is per-hop (RFC 6265 §5.3 processing on every response),
+            // so the redirect hop's cookie was still stored.
+            const stored = jar.getCookies({ hostname: "example.com", pathname: "/", protocol: "http:" });
+            expect(stored.map((c) => `${c.name}=${c.value}`)).toEqual(["hop=1", "final=2"]);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+
+    it("clone() preserves the multi-value view", async () => {
+        const { factory, close } = installBackend(() => ({
+            status: 200,
+            statusText: "OK",
+            setCookie: ["a=1", "b=2"],
+            body: "ok",
+        }));
+        const client = createClient({ transportFactory: factory, events });
+        try {
+            const resp = await client.fetch("http://example.com/");
+            const copy = resp.clone();
+            expect(copy.getSetCookie()).toEqual(["a=1", "b=2"]);
+        } finally {
+            await client.close();
+            await close();
+        }
+    });
+});
+
+describe("client — cookie jar receives every set-cookie of a response", () => {
+    it("stores both cookies of a multi-set-cookie response and replays them on the next request", async () => {
+        const seen: FakeRequest[] = [];
+        const { factory, close } = installBackend((req) => {
+            seen.push(req);
+            return {
+                status: 200,
+                statusText: "OK",
+                setCookie: ["sid=abc; Path=/", "theme=dark; Path=/"],
+                body: "ok",
+            };
+        });
+        const jar = createCookieJar();
+        const client = createClient({ transportFactory: factory, events, cookieJar: jar });
+        try {
+            await client.fetch("http://example.com/first");
+            const stored = jar.getCookies({ hostname: "example.com", pathname: "/", protocol: "http:" });
+            expect(stored.map((c) => `${c.name}=${c.value}`)).toEqual(["sid=abc", "theme=dark"]);
+            // The replayed request carries both cookies.
+            await client.fetch("http://example.com/second");
+            expect(seen[1]?.headers.get("cookie")).toBe("sid=abc; theme=dark");
         } finally {
             await client.close();
             await close();

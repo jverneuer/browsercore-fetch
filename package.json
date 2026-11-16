@@ -1,6 +1,6 @@
 {
     "name": "@browsercore/fetch",
-    "version": "0.2.20",
+    "version": "0.2.21",
     "description": "Developer-facing high-level HTTP API. Composes transport, tls, http1, http2, profiles, and cookies into a single fetch() surface.",
     "repository": {
         "type": "git",
@@ -54,8 +54,8 @@
         "@browsercore/contracts": "0.2.4",
         "@browsercore/cookies": "0.2.0",
         "@browsercore/crypto": "0.2.3",
-        "@browsercore/http1": "0.2.2",
-        "@browsercore/http2": "^0.2.9",
+        "@browsercore/http1": "0.2.4",
+        "@browsercore/http2": "^0.2.12",
         "@browsercore/profiles": "^0.2.4",
         "@browsercore/proxy": "^0.1.0",
         "@browsercore/tls": "^0.4.14",
