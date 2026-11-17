@@ -10,9 +10,15 @@
 // Connection-establishment + request dispatch composes every protocol layer.
 /* eslint-disable import/max-dependencies */
 
-import { connect as connectTransport, type Transport } from "@browsercore/transport";
-import type { CompressionProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
-import type { CryptoProvider } from "@browsercore/crypto";
+import { connect as connectTransport } from "@browsercore/transport";
+import type {
+    CompressionProvider,
+    CryptoProvider,
+    EventProvider,
+    Net,
+    DnsResolver,
+    Transport,
+} from "@browsercore/contracts";
 import { connectViaProxy, type ProxyConfig } from "@browsercore/proxy";
 import { connectTls } from "@browsercore/tls";
 import {
@@ -358,14 +364,7 @@ export async function openProxiedTransport(
             { host: url.host, port: url.port },
             proxyDialPlatform(net, dns),
         );
-        // @browsercore/proxy speaks contracts' Transport (literal-event
-        // on/once); this package's dial path speaks @browsercore/transport's
-        // Transport (EventProvider-shaped). The surfaces are incompatible at
-        // the type level but compatible where it matters at runtime: the
-        // tunneled stream only needs the tls layer's read/write/close, and
-        // the socket transport additionally implements on/once for the exact
-        // literal events http1 subscribes to. Single documented cast.
-        return tunneled as unknown as Transport;
+        return tunneled;
     } catch (err) {
         throw wrapProxyError(err, { url: originString(url) });
     }

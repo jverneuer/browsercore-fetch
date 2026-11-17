@@ -18,15 +18,15 @@
 // Top-of-stack orchestrator: legitimately composes many internal modules.
 /* eslint-disable import/max-dependencies */
 
-import type { Transport } from "@browsercore/transport";
 import type {
     CompressionProvider,
+    CryptoProvider,
     EventProvider,
     Net,
     DnsResolver,
     Platform,
+    Transport,
 } from "@browsercore/contracts";
-import type { CryptoProvider } from "@browsercore/crypto";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
 import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
 import type { ProxyConfig } from "@browsercore/proxy";
@@ -284,11 +284,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     const resolvedNet = options?.net ?? options?.platform?.network.tcp;
     const resolvedDns = options?.dns ?? options?.platform?.network.dns;
     const resolvedEvents = options?.events ?? options?.platform?.events;
-    const resolvedCrypto = options?.crypto ??
-        // Platform.crypto.provider is typed as contracts' CryptoProvider, which
-        // lacks the ML-KEM methods @browsercore/crypto adds. The actual runtime
-        // instance always comes from @browsercore/crypto, so this cast is sound.
-        (options?.platform?.crypto.provider as CryptoProvider | undefined);
+    const resolvedCrypto = options?.crypto ?? options?.platform?.crypto.provider;
     const resolvedCompression = options?.compression ?? options?.platform?.compression;
     if (resolvedEvents === undefined) {
         throw new Error(
