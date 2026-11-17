@@ -27,8 +27,13 @@
  */
 
 import type { Transport } from "@browsercore/transport";
-import type { CompressionProvider, EventProvider, Net, DnsResolver } from "@browsercore/contracts";
-import type { CryptoProvider } from "@browsercore/crypto";
+import type {
+    CompressionProvider,
+    CryptoProvider,
+    EventProvider,
+    Net,
+    DnsResolver,
+} from "@browsercore/contracts";
 import type { ProxyConfig } from "@browsercore/proxy";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
