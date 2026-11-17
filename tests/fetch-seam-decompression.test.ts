@@ -113,7 +113,9 @@ class FakeTransport extends EventEmitter implements Transport {
         // Closing one end signals the peer too, like a real duplex socket.
         const peer = this._peer;
         if (peer !== undefined && peer._state.state !== "closed") {
-            peer._state = { state: "closed", reason: { kind: "peer_close" } };
+            // "peer_close" is not a TransportCloseReason kind — the peer
+            // closing IS a remote_close; the fake had forged an invalid one.
+            peer._state = { state: "closed", reason: { kind: "remote_close" } };
             const peerRejecter = peer._pendingReadReject;
             if (peerRejecter !== undefined) {
                 peer._pendingRead = undefined;

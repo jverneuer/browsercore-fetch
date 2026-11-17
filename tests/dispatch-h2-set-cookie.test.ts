@@ -8,7 +8,13 @@
  * This is the http2#57 half of the fidelity chain, end to end in wire bytes.
  */
 import { describe, expect, it } from "vitest";
-import { crypto } from "@browsercore/crypto";
+// Http2Options.crypto is REQUIRED. The former `import { crypto } from
+// "@browsercore/crypto"` bound a nonexistent export — vitest's transform
+// silently yielded `undefined`, which only survived because connectHttp2
+// never invokes the provider unless the CLIENT initiates a PING. The
+// deterministic test provider satisfies the option honestly; no PING is
+// initiated on this wire path, so the bytes are unchanged.
+import { deterministicCrypto as crypto } from "./helpers/test-crypto.js";
 import { connectHttp2 } from "@browsercore/http2";
 import { dispatchHttp2 } from "../src/dispatch.js";
 import { parseUrl } from "../src/url.js";

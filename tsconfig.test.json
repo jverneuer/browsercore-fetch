@@ -1,0 +1,25 @@
+{
+    // Dual typecheck gate (run by `npm run typecheck`): compiles src/ AND the
+    // tests so the suite (deterministic-clock, oneshot-wire-parity, proxy
+    // integration, pool fakes, ...) is enforced by CI, not just by vitest's
+    // transpile-only run.
+    //
+    // `exclude` is OVERRIDDEN here on purpose: it is inherited from
+    // ./tsconfig.json, whose exclude list drops "tests" — without this
+    // override the `include` below would match nothing and the gate would
+    // silently typecheck zero test files.
+    //
+    // This config also replaces the deleted tsconfig.h2check.json, which
+    // extended a stale absolute path from a previous machine and covered only
+    // tests/h2-server.ts — a strict subset of what this gate typechecks.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "declaration": false,
+        "declarationMap": false,
+        "sourceMap": false,
+        "rootDir": "."
+    },
+    "include": ["src/**/*.ts", "tests/**/*.ts"],
+    "exclude": ["node_modules", "dist"]
+}

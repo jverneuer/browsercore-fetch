@@ -114,12 +114,18 @@ class FakeNetSocket implements Socket {
         this.emitCustom("close", true);
     }
 
+    // The `(...args: never[])` parameter is the bottom-type listener slot —
+    // by contravariance it accepts every real listener shape the transport
+    // registers. EventEmitter's own slot is `(...args: any[])`, which a
+    // never-args value does not satisfy, so the delegation widens the claim
+    // to unknown-args (sound: the emitter invokes the listener with exactly
+    // the args it was given).
     public once(event: string, listener: (...args: never[]) => void): void {
-        this.eventSurface.once(event, listener);
+        this.eventSurface.once(event, listener as (...args: unknown[]) => void);
     }
 
     public on(event: string, listener: (...args: never[]) => void): void {
-        this.eventSurface.on(event, listener);
+        this.eventSurface.on(event, listener as (...args: unknown[]) => void);
     }
 
     /** Test seam: deliver bytes as if they arrived from the network. */
@@ -200,7 +206,9 @@ function decodeAscii(buf: Uint8Array): string {
  */
 class PlainHttpFixture {
     public readonly requests: PlainHttpRequest[] = [];
-    private buffer = new Uint8Array(0);
+    // Bare `Uint8Array` (ArrayBufferLike) — concatBytes may back the result
+    // with a view over a larger buffer, not a standalone ArrayBuffer.
+    private buffer: Uint8Array = new Uint8Array(0);
 
     public constructor(socket: FakeNetSocket, private readonly handler: (req: PlainHttpRequest) => PlainHttpResponse) {
         void this.loop(socket);

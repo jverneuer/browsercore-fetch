@@ -67,7 +67,7 @@ describe("AbortError", () => {
         expect(err.kind).toBe("AbortError");
         expect(err.name).toBe("AbortError");
         expect(err.url).toBe("https://z");
-        expect(err.details.reason).toBe("aborted");
+        expect(err.details["reason"]).toBe("aborted");
     });
 });
 

@@ -21,8 +21,25 @@ import {
 import { FetchError } from "../src/errors.js";
 import { compression } from "./helpers/test-compression.js";
 
+/**
+ * Deeply-writable {@link BrowserProfile} — every `readonly` stripped so tests
+ * can forge per-test variants by direct field assignment (`profile.tls.
+ * cipherSuites = [...]`). Still assignable to `BrowserProfile` everywhere a
+ * real (immutable) profile is expected, so the mutation stays test-local.
+ */
+type MutableProfile = {
+    -readonly [K in keyof BrowserProfile]: BrowserProfile[K] extends object
+        ? MutableProfileValue<BrowserProfile[K]>
+        : BrowserProfile[K];
+};
+type MutableProfileValue<T> = T extends readonly (infer U)[]
+    ? MutableProfileValue<U>[]
+    : T extends object
+      ? { -readonly [K in keyof T]: MutableProfileValue<T[K]> }
+      : T;
+
 /** Build a minimal valid profile for translation tests. */
-function makeProfile(overrides: Partial<BrowserProfile> = {}): BrowserProfile {
+function makeProfile(overrides: Partial<MutableProfile> = {}): MutableProfile {
     return {
         id: "default" as ProfileId,
         name: "default",
@@ -135,7 +152,7 @@ describe("profileToTlsConfig", () => {
             profileToTlsConfig(profile, "h");
         } catch (err) {
             expect((err as FetchError).message).toContain("cipher suite");
-            expect((err as FetchError).details.value).toBe("TLS_FAKE_SUITE");
+            expect((err as FetchError).details["value"]).toBe("TLS_FAKE_SUITE");
         }
     });
 
@@ -471,7 +488,7 @@ describe("profileHttp1Config", () => {
     it("exposes the profile default headers and header order", () => {
         const config = profileHttp1Config(makeProfile());
         expect(config.defaultHeaders["user-agent"]).toBe("test/1.0");
-        expect(config.defaultHeaders.accept).toBe("*/*");
+        expect(config.defaultHeaders["accept"]).toBe("*/*");
         expect(config.headerOrder).toEqual(["user-agent", "accept"]);
     });
 });

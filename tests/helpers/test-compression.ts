@@ -8,7 +8,7 @@
  * provider via Platform; never a bare import.
  */
 
-import { brotliCompressSync, brotliDecompressSync, deflateRawSync, deflateSync, gunzipSync, gzipSync, inflateRawSync, inflateSync } from "node:zlib";
+import { brotliCompressSync, brotliDecompressSync, deflateSync, gunzipSync, gzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import type { CompressionProvider, ContentEncoding } from "@browsercore/contracts";
 
 /**
@@ -45,8 +45,9 @@ export function createTestCompressionProvider(): CompressionProvider {
         },
         decompress(data: Uint8Array, encoding: ContentEncoding): Uint8Array {
             switch (encoding) {
+                // ContentEncoding has no "x-gzip" member (contracts) — the
+                // former dead case was unreachable through the type.
                 case "gzip":
-                case "x-gzip":
                     return new Uint8Array(gunzipSync(data));
                 case "deflate": {
                     // Servers disagree on deflate framing: try zlib-wrapped

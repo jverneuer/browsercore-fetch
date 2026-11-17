@@ -371,25 +371,31 @@ describe("proxyDialPlatform — minimal dial platform", () => {
         const net: Net = { connect: () => ({}) as Socket };
         const dns = recordingDns();
         const platform = proxyDialPlatform(net, dns);
-        expect(platform.network.tcp).toBe(net);
-        expect(platform.network.dns).toBe(dns);
+        // Optional chaining only narrows the type — the bundle is present at
+        // runtime, and a missing bundle would fail the identity assertion.
+        expect(platform.network?.tcp).toBe(net);
+        expect(platform.network?.dns).toBe(dns);
     });
 
     it("leaves network.dns undefined when absent (dialer raises its own typed error)", async () => {
         const net: Net = { connect: () => ({}) as Socket };
         const platform = proxyDialPlatform(net, undefined);
-        expect(platform.network.dns).toBeUndefined();
+        expect(platform.network?.dns).toBeUndefined();
     });
 
     it("throws on access to any bundle the dialer must not touch", () => {
         const net: Net = { connect: () => ({}) as Socket };
         const platform = proxyDialPlatform(net, recordingDns());
-        expect(() => platform.crypto.provider).toThrow("platform.crypto");
-        expect(() => platform.telemetry.logger).toThrow("platform.telemetry");
-        expect(() => platform.events.on).toThrow("platform.events");
-        expect(() => platform.time.clock).toThrow("platform.time");
-        expect(() => platform.compression.gzip).toThrow("platform.compression");
-        expect(() => platform.network.udp.send).toThrow("network.udp");
+        // Each bundle is a THROWING getter (src/proxy.ts): optional chaining
+        // still evaluates the getter, so the access throws exactly as before.
+        expect(() => platform.crypto?.provider).toThrow("platform.crypto");
+        expect(() => platform.telemetry?.logger).toThrow("platform.telemetry");
+        expect(() => platform.events?.on).toThrow("platform.events");
+        // Time IS the Clock since contracts 0.2.7 (no `.clock` sub-bundle) —
+        // any member access trips the throwing `time` getter.
+        expect(() => platform.time?.now).toThrow("platform.time");
+        expect(() => platform.compression?.gzip).toThrow("platform.compression");
+        expect(() => platform.network?.udp).toThrow("network.udp");
     });
 });
 
@@ -443,7 +449,13 @@ function makePool(opts: { idleTimeoutMs?: number }): {
         return transport;
     };
     const pool = createPool(
-        { idleTimeoutMs: opts.idleTimeoutMs, events: stubEvents(), transportFactory: factory },
+        {
+            // Conditional spread keeps the key ABSENT (not undefined) under
+            // exactOptionalPropertyTypes when no timeout was requested.
+            ...(opts.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: opts.idleTimeoutMs }),
+            events: stubEvents(),
+            transportFactory: factory,
+        },
         lookupProfile,
         fallbackProfile(),
     );

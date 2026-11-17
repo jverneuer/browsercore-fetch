@@ -30,6 +30,8 @@ describe("buildResponse — getSetCookie", () => {
                 ["SET-COOKIE", "c=3"],
             ]),
             utf8("body"),
+            undefined,
+            undefined,
         );
         expect(resp.getSetCookie()).toEqual(["a=1", "b=2", "c=3"]);
     });
@@ -45,12 +47,14 @@ describe("buildResponse — getSetCookie", () => {
                 ["set-cookie", withDate],
             ]),
             utf8("body"),
+            undefined,
+            undefined,
         );
         expect(resp.getSetCookie()).toEqual(["sid=abc; Path=/; HttpOnly", withDate]);
     });
 
     it("returns an empty array when no set-cookie is present", () => {
-        const resp = buildResponse("https://e.com/", 200, "OK", headers([["x", "y"]]), utf8("body"));
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([["x", "y"]]), utf8("body"), undefined, undefined);
         expect(resp.getSetCookie()).toEqual([]);
     });
 });
@@ -67,6 +71,8 @@ describe("buildResponse — getHeaderValues", () => {
                 ["X-TAG", "two"],
             ]),
             utf8("body"),
+            undefined,
+            undefined,
         );
         expect(resp.getHeaderValues("x-tag")).toEqual(["one", "two"]);
         expect(resp.getHeaderValues("X-Tag")).toEqual(["one", "two"]);
@@ -83,6 +89,8 @@ describe("buildResponse — getHeaderValues", () => {
                 ["set-cookie", "second=2"],
             ]),
             utf8("body"),
+            undefined,
+            undefined,
         );
         expect(resp.headers["set-cookie"]).toBe("second=2");
         expect(resp.getSetCookie()).toEqual(["first=1", "second=2"]);
@@ -98,6 +106,8 @@ describe("buildResponse — getHeaderValues", () => {
                 ["set-cookie", "b=2"],
             ]),
             utf8("once"),
+            undefined,
+            undefined,
         );
         const copy = resp.clone();
         expect(copy.getSetCookie()).toEqual(["a=1", "b=2"]);
@@ -186,6 +196,8 @@ describe("buildResponse", () => {
             "OK",
             headers([["content-type", "text/plain"]]),
             utf8("body"),
+            undefined,
+            undefined,
         );
         expect(resp.url).toBe("https://e.com/x");
         expect(resp.status).toBe(200);
@@ -195,13 +207,13 @@ describe("buildResponse", () => {
     });
 
     it("text() consumes the body once and marks bodyUsed", async () => {
-        const resp = buildResponse("https://e.com/", 200, "OK", new Map(), utf8("hello"));
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([]), utf8("hello"), undefined, undefined);
         expect(await resp.text()).toBe("hello");
         expect(resp.bodyUsed).toBe(true);
     });
 
     it("body() rejects after a single consumption", async () => {
-        const resp = buildResponse("https://e.com/", 200, "OK", new Map(), utf8("x"));
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([]), utf8("x"), undefined, undefined);
         await resp.body();
         expect(resp.bodyUsed).toBe(true);
         await expect(resp.body()).rejects.toBeInstanceOf(FetchError);
@@ -214,26 +226,28 @@ describe("buildResponse", () => {
             "https://e.com/",
             200,
             "OK",
-            new Map(),
+            headers([]),
             utf8('{"a":1,"b":[2,3]}'),
+            undefined,
+            undefined,
         );
         expect(await resp.json()).toEqual({ a: 1, b: [2, 3] });
     });
 
     it("json() throws when the body is not valid JSON", async () => {
-        const resp = buildResponse("https://e.com/", 200, "OK", new Map(), utf8("not json"));
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([]), utf8("not json"), undefined, undefined);
         await expect(resp.json()).rejects.toThrow(SyntaxError);
     });
 
     it("body() returns the raw bytes", async () => {
         const bytes = utf8("raw");
-        const resp = buildResponse("https://e.com/", 200, "OK", new Map(), bytes);
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([]), bytes, undefined, undefined);
         const out = await resp.body();
         expect(Array.from(out)).toEqual(Array.from(bytes));
     });
 
     it("clone() yields an independent consumable copy", async () => {
-        const resp = buildResponse("https://e.com/", 200, "OK", new Map(), utf8("once"));
+        const resp = buildResponse("https://e.com/", 200, "OK", headers([]), utf8("once"), undefined, undefined);
         const copy = resp.clone();
         // Original and clone each consume independently.
         expect(await resp.text()).toBe("once");
@@ -264,6 +278,8 @@ describe("buildResponse", () => {
             "Created",
             headers([["content-type", "application/json"]]),
             utf8("1"),
+            undefined,
+            undefined,
         );
         const copy = resp.clone();
         expect(copy.url).toBe("https://e.com/x");

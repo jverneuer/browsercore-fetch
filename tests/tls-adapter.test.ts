@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import type {
+    AlertLevel,
     CipherSuite,
     CloseReason,
     ProtocolVersion,
+    ResumptionTicket,
     TlsConnection,
     TlsSessionId,
     TlsState,
@@ -20,7 +22,9 @@ class FakeTls extends EventEmitter implements TlsConnection {
     public readonly id: TlsSessionId = "tls-fake" as TlsSessionId;
     public readonly protocolVersion: ProtocolVersion = { name: "TLS 1.3", wire: 0x0304 };
     public readonly cipherSuite: CipherSuite = "TLS_AES_128_GCM_SHA256";
-    public alpnProtocol: string | undefined = "h2";
+    // Declared optional (never explicitly-undefined) so the fake satisfies
+    // `alpnProtocol?: string` under exactOptionalPropertyTypes.
+    public alpnProtocol?: string = "h2";
     public state: TlsState = {
         state: "open",
         sessionId: this.id,
@@ -30,6 +34,10 @@ class FakeTls extends EventEmitter implements TlsConnection {
     };
     public readonly writes: Uint8Array[] = [];
     public readonly closes: Array<CloseReason | undefined> = [];
+    /** Alerts handed to sendAlert, in call order (level + description pairs). */
+    public readonly alerts: Array<{ level: AlertLevel; description: number }> = [];
+    /** Server names queried via getResumptionTicket, in call order. */
+    public readonly resumptionLookups: string[] = [];
     private readonly reads: Array<{ payload: Uint8Array }> = [];
 
     public write(data: Uint8Array): Promise<void> {
@@ -47,6 +55,15 @@ class FakeTls extends EventEmitter implements TlsConnection {
     public close(reason?: CloseReason): Promise<void> {
         this.closes.push(reason);
         return Promise.resolve();
+    }
+    public sendAlert(level: AlertLevel, description: number): Promise<void> {
+        this.alerts.push({ level, description });
+        return Promise.resolve();
+    }
+    public getResumptionTicket(serverName: string): ResumptionTicket | undefined {
+        this.resumptionLookups.push(serverName);
+        // The fake never stores tickets — no PSK resumption to offer.
+        return undefined;
     }
 
     /** Push a fake decrypted record for the adapter to read. */
