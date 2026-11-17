@@ -58,7 +58,7 @@
         "@browsercore/http2": "^0.2.14",
         "@browsercore/profiles": "^0.2.6",
         "@browsercore/proxy": "^0.1.4",
-        "@browsercore/tls": "^0.4.17",
+        "@browsercore/tls": "^0.4.18",
         "@browsercore/transport": "^0.2.10"
     },
     "overrides": {

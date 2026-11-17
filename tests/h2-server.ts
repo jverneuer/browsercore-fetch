@@ -31,8 +31,10 @@ import {
 } from "@browsercore/http2";
 import type { Frame, Http2StreamId } from "@browsercore/http2";
 import type {
+    AlertLevel,
     CipherSuite,
     ProtocolVersion,
+    ResumptionTicket,
     TlsConnection,
     TlsSessionId,
     TlsState,
@@ -216,6 +218,19 @@ export class FakeTlsConnection extends EventEmitter implements TlsConnection {
 
     public close(): Promise<void> {
         return this._transport.close();
+    }
+
+    /**
+     * No-op: the scripted server never reacts to alerts, and no test inspects
+     * them — the connection just keeps bridging bytes.
+     */
+    public sendAlert(_level: AlertLevel, _description: number): Promise<void> {
+        return Promise.resolve();
+    }
+
+    /** The bridge never stores tickets, so resumption is never offered. */
+    public getResumptionTicket(_serverName: string): ResumptionTicket | undefined {
+        return undefined;
     }
 }
 
