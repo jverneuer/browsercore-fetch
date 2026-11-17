@@ -8,6 +8,14 @@ A developer-facing high-level HTTP API. Composes every lower-level package
 (transport, tls, http1, http2, profiles, cookies) into a single `fetch()` surface
 with browser-accurate TLS + HTTP fingerprints.
 
+## Install
+
+```sh
+npm install @browsercore/fetch
+```
+
+Most users want **[browsersmith](https://www.npmjs.com/package/browsersmith)** instead — the composition root that ships a ready-made Node Platform, profiles, and cookie jar. Install fetch directly when you bring your own `Platform`: custom transports, embedded runtimes, tests.
+
 ## Responsibility
 
 URL parsing, connection reuse, profile loading, redirect policy, cookie
@@ -165,3 +173,14 @@ No package above `@browsercore/fetch` imports from below it.
 ## Contributing
 
 Contributions are welcome — bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-fetch/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
+
+## License
+
+MIT
+---
+
+<div align="center">
+
+🦄 You scrolled past the entire dependency graph to get here — that earns you a unicorn, and per unicorn statute §1 your day will now be amazing. Congratulations.
+
+</div>
