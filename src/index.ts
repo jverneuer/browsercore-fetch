@@ -26,9 +26,13 @@ export type {
     RedirectPolicy,
 } from "./types.js";
 
-// The proxy types FetchOptions/FetchClientOptions speak in — re-exported so
-// consumers configure `proxy` without depending on @browsercore/proxy directly.
-export type { ProxyConfig, ProxyScheme } from "@browsercore/proxy";
+// The option-shape types FetchOptions/FetchClientOptions speak in, re-exported
+// from their CANONICAL home (@browsercore/contracts — audit #3): consumers
+// configure `proxy`/`profile`/`clock` without depending on the sibling
+// implementation packages. @browsercore/proxy and @browsercore/profiles
+// re-export these same canonical types, so existing imports keep compiling.
+export type { Clock, ProfileId, ProxyConfig, ProxyScheme, TimerHandle } from "@browsercore/contracts";
+export { systemClock } from "./types.js";
 
 export { assertNever } from "./utils.js";
 

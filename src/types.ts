@@ -6,9 +6,15 @@
  * fetch() surface with browser-accurate TLS + HTTP fingerprints.
  */
 
+import type { Clock, ProfileId, ProxyConfig, TimerHandle } from "@browsercore/contracts";
+// DELIBERATELY still @browsercore/cookies, not contracts: contracts 0.2.7
+// also declares a CookieJar, but its `setCookie(url, cookie)` parameter
+// order is flipped relative to the jar cookies 0.2.2 actually implements
+// (`setCookie(raw, url)`) — the two are NOT interchangeable yet. Cookie
+// reconciliation is deferred (architect decision); the drift alarms in
+// cookies 0.2.2 guard the seam until that wave lands. Switching this
+// import early would type-check against a shape nothing implements.
 import type { CookieJar } from "@browsercore/cookies";
-import type { ProfileId } from "@browsercore/profiles";
-import type { ProxyConfig } from "@browsercore/proxy";
 
 /** Branded request identifier for logging / correlation. */
 export type FetchRequestId = string & { __brand: "FetchRequestId" };
@@ -127,3 +133,43 @@ export interface ParsedUrl {
     readonly query: string;
     readonly fragment: string;
 }
+
+// ---------------------------------------------------------------------------
+// Clock seam (injected — the canonical @browsercore/contracts Clock)
+// ---------------------------------------------------------------------------
+
+/**
+ * The default {@link Clock}: delegates to the platform globals
+ * (`Date.now()`, `performance.now()`, global `setTimeout`/`clearTimeout`).
+ *
+ * Same seam pattern tls/transport use (`systemClock` housed next to the
+ * options that inject it), typed as the CANONICAL contracts Clock
+ * (replaceability audit 2026-11-16, remediation item #6: fetch held the
+ * Platform yet ignored `platform.time` — its whole-request timeout and pool
+ * idle-eviction timers were bare `setTimeout`). Production callers never
+ * need to supply a clock; tests inject a manual-advance fake so timeouts
+ * fire at exact virtual instants with zero real timers.
+ *
+ * Unit contract (from the contract's docs): `now()` is WALL time (epoch ms,
+ * can jump — NTP); `monotonic()` is elapsed/deadline time in ms and never
+ * goes backwards.
+ */
+export const systemClock: Clock = {
+    now: () => Date.now(),
+    monotonic: () => performance.now(),
+    sleep: (ms) =>
+        new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+        }),
+    setTimeout: (ms, fn) => {
+        return setTimeout(fn, ms);
+    },
+    clearTimeout: (handle) => {
+        clearTimeout(handle as ReturnType<typeof setTimeout>);
+    },
+};
+
+// Re-exported so consumers can type their own Clock injections (and read the
+// handle type) without importing @browsercore/contracts directly — same
+// convenience rule transport applies to its clock seam.
+export type { Clock, TimerHandle };

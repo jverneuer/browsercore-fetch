@@ -25,11 +25,12 @@ import type {
     Net,
     DnsResolver,
     Platform,
+    ProfileId,
+    ProxyConfig,
     Transport,
 } from "@browsercore/contracts";
 import { createCookieJar, CookieDomainError, type CookieJar } from "@browsercore/cookies";
-import { getProfile, type BrowserProfile, type ProfileId } from "@browsercore/profiles";
-import type { ProxyConfig } from "@browsercore/proxy";
+import { getProfile, type BrowserProfile } from "@browsercore/profiles";
 import { AbortError, FetchTimeoutError, RedirectError, ensureFetchError } from "./errors.js";
 import { dispatchHttp1, dispatchHttp2 } from "./dispatch.js";
 import { createPool, type ConnectionPool, type PoolOptions } from "./pool.js";
@@ -42,13 +43,7 @@ import {
 import { METHODS_PRESERVED_ON_303, isRedirectStatus, resolveRedirectPolicy } from "./redirect.js";
 import { assertNever, createId } from "./utils.js";
 import { cookieUrl, defaultPort, originString, parseUrl, requestTarget, resolveRedirectUrl } from "./url.js";
-import type {
-    FetchOptions,
-    FetchRequestId,
-    FetchResponse,
-    ParsedUrl,
-    RedirectPolicy,
-} from "./types.js";
+import { systemClock, type Clock, type FetchOptions, type FetchRequestId, type FetchResponse, type ParsedUrl, type RedirectPolicy, type TimerHandle } from "./types.js";
 
 /** Default request timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -111,6 +106,16 @@ export interface FetchClientOptions {
      * bodies (HTTP/2 does not decompress content-encoding).
      */
     readonly compression?: CompressionProvider;
+    /**
+     * Time + timer source — the canonical `Clock` from
+     * `@browsercore/contracts`. Every timer fetch arms (the whole-request
+     * timeout, pool idle eviction) routes through it. Injected from
+     * `platform.time` by default; set this only to override the single
+     * adapter. Defaults to {@link systemClock} (platform globals) when
+     * neither is provided. Inject a manual-advance Clock in tests to fire
+     * timeouts at exact virtual instants with zero real timers.
+     */
+    readonly clock?: Clock;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -281,11 +286,16 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     // (browsersmith) builds the Platform and passes it down through options.
     // No fallback for events — the composition root is the sole EventProvider
     // source.
-    const resolvedNet = options?.net ?? options?.platform?.network.tcp;
-    const resolvedDns = options?.dns ?? options?.platform?.network.dns;
+    const resolvedNet = options?.net ?? options?.platform?.network?.tcp;
+    const resolvedDns = options?.dns ?? options?.platform?.network?.dns;
     const resolvedEvents = options?.events ?? options?.platform?.events;
-    const resolvedCrypto = options?.crypto ?? options?.platform?.crypto.provider;
+    const resolvedCrypto = options?.crypto ?? options?.platform?.crypto?.provider;
     const resolvedCompression = options?.compression ?? options?.platform?.compression;
+    // The CLIENT resolves time exactly once (audit #6: fetch held the Platform
+    // yet ignored platform.time). The proxy dialer's platform deliberately
+    // keeps its throwing time getter — the dialer must not touch time; only
+    // this resolution and the timers it feeds may.
+    const resolvedClock: Clock = options?.clock ?? options?.platform?.time ?? systemClock;
     if (resolvedEvents === undefined) {
         throw new Error(
             "createClient requires an events provider. " +
@@ -295,8 +305,11 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     }
     // Assemble pool options so absent optionals stay absent (exactOptionalPropertyTypes
     // rejects `{ idleTimeoutMs: undefined }` when the field is `idleTimeoutMs?: number`).
-    // `events` is required on PoolOptions, so it is always set here.
-    const poolOptions: PoolOptions = { events: resolvedEvents };
+    // `events` is required on PoolOptions, so it is always set here. The
+    // clock is always set too — the client resolves it once (above) and the
+    // pool's idle-eviction timers arm on the same injected source, so a
+    // manual-advance test Clock drives request timeouts AND pool eviction.
+    const poolOptions: PoolOptions = { events: resolvedEvents, clock: resolvedClock };
     if (options?.idleTimeoutMs !== undefined) {
         poolOptions.idleTimeoutMs = options.idleTimeoutMs;
     }
@@ -334,7 +347,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
         // The effective proxy keys the pool entry for the whole request
         // lifecycle (acquire/release/teardown must agree on it).
         const proxy = resolveProxy(opts, options);
-        const profile = profileId ? getProfile(profileId) : undefined;
+        const profile = profileId === undefined ? undefined : getProfile(profileId);
         const method = opts?.method ?? "GET";
         const headers = buildHeaders(url, opts, profile, resolvedCompression);
         applyCookies(headers, jar, url);
@@ -356,9 +369,14 @@ export function createClient(options?: FetchClientOptions): FetchClient {
             rejectDispatch?.(err);
         };
 
-        const timeoutTimer = setTimeout(() => {
+        // The whole-request timeout arms on the resolved Clock (audit #6) —
+        // never a bare setTimeout — so a manual-advance test Clock fires it
+        // at an exact virtual instant. Under the default systemClock this is
+        // the platform's setTimeout: a macrotask that cannot interleave the
+        // microtask continuation below (the settled-guard guarantee).
+        const timeoutTimer: TimerHandle = resolvedClock.setTimeout(timeoutMs, () => {
             finishWithError(new FetchTimeoutError(timeoutMs));
-        }, timeoutMs);
+        });
 
         const onAbort = (): void => {
             finishWithError(new AbortError("request aborted", { url: target }));
@@ -368,7 +386,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
         return new Promise<FetchResponse>((resolve, reject) => {
             rejectDispatch = reject;
             if (opts?.signal?.aborted === true) {
-                clearTimeout(timeoutTimer);
+                resolvedClock.clearTimeout(timeoutTimer);
                 opts.signal.removeEventListener("abort", onAbort);
                 finishWithError(new AbortError("request aborted", { url: target }));
                 return;
@@ -424,7 +442,7 @@ export function createClient(options?: FetchClientOptions): FetchClient {
                 } catch (err) {
                     finishWithError(ensureFetchError(err, { url: target }));
                 } finally {
-                    clearTimeout(timeoutTimer);
+                    resolvedClock.clearTimeout(timeoutTimer);
                     opts?.signal?.removeEventListener("abort", onAbort);
                 }
             })();

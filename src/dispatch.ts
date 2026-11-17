@@ -17,9 +17,10 @@ import type {
     EventProvider,
     Net,
     DnsResolver,
+    ProxyConfig,
     Transport,
 } from "@browsercore/contracts";
-import { connectViaProxy, type ProxyConfig } from "@browsercore/proxy";
+import { connectViaProxy } from "@browsercore/proxy";
 import { connectTls } from "@browsercore/tls";
 import {
     connectHttp1,
