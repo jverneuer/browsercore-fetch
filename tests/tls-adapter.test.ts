@@ -20,7 +20,9 @@ class FakeTls extends EventEmitter implements TlsConnection {
     public readonly id: TlsSessionId = "tls-fake" as TlsSessionId;
     public readonly protocolVersion: ProtocolVersion = { name: "TLS 1.3", wire: 0x0304 };
     public readonly cipherSuite: CipherSuite = "TLS_AES_128_GCM_SHA256";
-    public alpnProtocol: string | undefined = "h2";
+    // Declared optional (never explicitly-undefined) so the fake satisfies
+    // `alpnProtocol?: string` under exactOptionalPropertyTypes.
+    public alpnProtocol?: string = "h2";
     public state: TlsState = {
         state: "open",
         sessionId: this.id,

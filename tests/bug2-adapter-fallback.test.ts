@@ -21,7 +21,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { vi as vitestVi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Net, DnsResolver, EventProvider, Platform } from "@browsercore/contracts";
+import type { Crypto, Net, DnsResolver, Network, Platform } from "@browsercore/contracts";
 import type { Transport, TransportId, TransportState } from "@browsercore/transport";
 import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { ParsedHeadersImpl } from "@browsercore/http1";
@@ -32,12 +32,12 @@ import type {
     HttpRequest,
     HttpResponse,
 } from "@browsercore/http1";
-import type { Http2Connection, Http2Request, Http2Response } from "@browsercore/http2";
 import type { TlsConnection } from "@browsercore/tls";
 import { createPool, type ConnectionPool } from "../src/pool.js";
 import { openTcpTransport } from "../src/dispatch.js";
 import { parseUrl } from "../src/url.js";
 import type { ParsedUrl } from "../src/types.js";
+import { stubEvents } from "./helpers/test-platform.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock references. Declared here so the `vi.mock` factory (hoisted by
@@ -91,8 +91,13 @@ vi.mock("@browsercore/http2", async (importOriginal) => {
 const fakeNet = { connect: () => undefined } as unknown as Net;
 const fakeDns = { lookup: () => undefined } as unknown as DnsResolver;
 
-/** A fake Platform — the decoupled way to inject runtime dependencies. */
-function fakePlatform(): Platform {
+/**
+ * A fake Platform — the decoupled way to inject runtime dependencies. The
+ * return type pins `network`/`crypto` non-optional (Platform marks every
+ * bundle optional); the fake always carries them, so reads below narrow
+ * without a runtime guard.
+ */
+function fakePlatform(): Platform & { network: Network; crypto: Crypto } {
     return {
         network: { tcp: fakeNet, dns: fakeDns, udp: {} as never },
         crypto: { provider: {} as never },
@@ -225,7 +230,7 @@ describe("openTcpTransport — uses provided adapters", () => {
         mockConnect.mockResolvedValue(new StubTransport());
 
         const parsed = url("https://example.com:8443/path");
-        const result = await openTcpTransport(parsed, fakeNet, fakeDns, new EventEmitter() as unknown as EventProvider);
+        const result = await openTcpTransport(parsed, fakeNet, fakeDns, stubEvents());
 
         expect(mockConnect).toHaveBeenCalledTimes(1);
         const connectArg = mockConnect.mock.calls[0]! as ReadonlyArray<unknown>;
@@ -244,7 +249,7 @@ describe("openTcpTransport — uses provided adapters", () => {
 describe("openTcpTransport — throws without adapters", () => {
     it("throws FetchError when called without net/dns", () => {
         const parsed = url("https://example.com:8443/path");
-        expect(() => openTcpTransport(parsed)).toThrow(
+        expect(() => openTcpTransport(parsed, undefined, undefined, undefined)).toThrow(
             "openTcpTransport requires net and dns adapters",
         );
         expect(mockConnect).not.toHaveBeenCalled();
@@ -264,8 +269,18 @@ describe("pool integration — Platform provides adapters", () => {
         mockConnectHttp1.mockResolvedValue(fakeHttp1Conn());
 
         const platform = fakePlatform();
+        const { tcp: net, dns } = platform.network;
+        if (net === undefined || dns === undefined) {
+            throw new Error("fake platform must carry net/dns adapters");
+        }
         const pool: ConnectionPool = createPool(
-            { net: platform.network.tcp, dns: platform.network.dns, crypto: platform.crypto.provider, events: new EventEmitter() as unknown as EventProvider },
+            {
+                net,
+                dns,
+                crypto: platform.crypto.provider,
+                // EventEmitter structurally satisfies EventProvider.
+                events: stubEvents(),
+            },
             lookupProfile,
             fallbackProfile(),
         );
@@ -296,7 +311,7 @@ describe("pool integration — Platform provides adapters", () => {
 
 describe("pool integration — no adapters throws", () => {
     it("throws when the pool has no net/dns and no Platform", async () => {
-        const pool: ConnectionPool = createPool({}, lookupProfile, fallbackProfile());
+        const pool: ConnectionPool = createPool({ events: stubEvents() }, lookupProfile, fallbackProfile());
         await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
             "openTcpTransport requires net and dns adapters",
         );

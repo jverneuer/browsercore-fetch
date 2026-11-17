@@ -348,6 +348,7 @@ describe("pool idle eviction on an injected Clock", () => {
         const pool: ConnectionPool = createPool(
             {
                 idleTimeoutMs: 300,
+                events: stubEvents(),
                 clock,
                 transportFactory: () => {
                     const t = new StubTransport();
@@ -392,6 +393,7 @@ describe("pool idle eviction on an injected Clock", () => {
         const pool: ConnectionPool = createPool(
             {
                 idleTimeoutMs: 300,
+                events: stubEvents(),
                 clock,
                 transportFactory: () => {
                     const t = new StubTransport();
@@ -429,6 +431,7 @@ describe("pool idle eviction on an injected Clock", () => {
         const pool: ConnectionPool = createPool(
             {
                 idleTimeoutMs: 300,
+                events: stubEvents(),
                 clock,
                 transportFactory: () => new StubTransport(),
             },

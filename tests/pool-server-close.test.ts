@@ -33,6 +33,9 @@ import { stubEvents } from "./helpers/test-platform.js";
 // fires — the same surface a real TcpTransport exposes when the peer FINs.
 // ---------------------------------------------------------------------------
 
+/** The closed variant of `TransportState` — source of the close-reason union. */
+type ClosedTransportState = Extract<TransportState, { state: "closed" }>;
+
 class PairedTransport extends EventEmitter implements Transport {
     public readonly id: TransportId;
     private stateValue: TransportState = { state: "open" };
@@ -109,7 +112,7 @@ class PairedTransport extends EventEmitter implements Transport {
     }
 
     /** Transition to closed; optionally reject a pending read and emit `close`. */
-    private closeAs(reason: TransportState extends { state: "closed"; reason: infer R } ? R : never, evented: boolean): void {
+    private closeAs(reason: ClosedTransportState["reason"], evented: boolean): void {
         if (this.stateValue.state === "closed") {
             return;
         }
@@ -392,7 +395,9 @@ function makePool(opts: { idleTimeoutMs?: number }): {
     const dials: Array<{ host: string; port: number }> = [];
     const clientTransports: PairedTransport[] = [];
     const pool = createPool({
-        idleTimeoutMs: opts.idleTimeoutMs,
+        // Conditional spread keeps the key ABSENT (not undefined) under
+        // exactOptionalPropertyTypes when no timeout was requested.
+        ...(opts.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: opts.idleTimeoutMs }),
         events,
         transportFactory: (host: string, port: number): Transport => {
             dials.push({ host, port });

@@ -5,7 +5,6 @@
  * on the real pool + transportFactory to drive the fake HTTP/1.1 server).
  */
 import { describe, expect, it, vi } from "vitest";
-import type { Transport } from "@browsercore/transport";
 
 // ---------------------------------------------------------------------------
 // Top-level pool mock: every createClient() in this file gets a pool whose

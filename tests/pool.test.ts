@@ -5,6 +5,7 @@ import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
 import { createPool, type ConnectionPool } from "../src/pool.js";
 import { parseUrl } from "../src/url.js";
 import type { ParsedUrl } from "../src/types.js";
+import { stubEvents } from "./helpers/test-platform.js";
 
 // ---------------------------------------------------------------------------
 // Minimal fake transport + a fallback profile. The pool's transportFactory
@@ -88,7 +89,17 @@ function makePool(opts: {
             transports.push(t);
             return t;
         });
-    const pool = createPool({ idleTimeoutMs: opts.idleTimeoutMs, transportFactory: factory }, lookup, fallbackProfile());
+    const pool = createPool(
+        {
+            // Conditional spread keeps the key ABSENT (not undefined) under
+            // exactOptionalPropertyTypes when no timeout was requested.
+            ...(opts.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: opts.idleTimeoutMs }),
+            events: stubEvents(),
+            transportFactory: factory,
+        },
+        lookup,
+        fallbackProfile(),
+    );
     return { pool, calls, transports };
 }
 

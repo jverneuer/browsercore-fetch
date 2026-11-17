@@ -10,6 +10,7 @@ import type {
 } from "@browsercore/http1";
 import type {
     Http2Connection,
+    Http2ConnectionId,
     Http2Request,
     Http2Response,
 } from "@browsercore/http2";
@@ -25,14 +26,15 @@ import type { TlsConnection } from "@browsercore/tls";
 import type { Transport } from "@browsercore/transport";
 import type { BrowserProfile } from "@browsercore/profiles";
 import { compression } from "./helpers/test-compression.js";
-import { crypto as testCrypto } from "@browsercore/crypto";
+import { deterministicCrypto } from "./helpers/test-crypto.js";
 import { stubEvents } from "./helpers/test-platform.js";
+import { h1Headers, h2Headers } from "./helpers/test-headers.js";
 
 // Crypto provider for tests that exercise establishConnection directly. The
-// real @browsercore/crypto singleton — the lower layers (connectTls/connectHttp2)
-// are mocked here, so it is never invoked; production code receives it via
-// Platform only.
-const crypto = testCrypto;
+// deterministic test provider — the lower layers (connectTls/connectHttp2)
+// are mocked here, so it is never invoked; production code receives a
+// provider via Platform only (@browsercore/crypto ships no singleton).
+const crypto = deterministicCrypto;
 
 // ---------------------------------------------------------------------------
 // Top-level mocks for the lower-level @browsercore/* packages. These let us
@@ -160,7 +162,7 @@ function fakeHttp2(
 ): Http2Connection & { requests: Http2Request[] } {
     const requests: Http2Request[] = [];
     return {
-        id: "h2-fake",
+        id: "h2-fake" as Http2ConnectionId,
         settings: {},
         async request(req: Http2Request): Promise<Http2Response> {
             requests.push(req);
@@ -178,33 +180,33 @@ function fakeHttp2(
 const okResponse = (body = ""): HttpResponse => ({
     statusCode: 200,
     statusText: "OK",
-    headers: new Map(),
+    headers: h1Headers([]),
     body: new TextEncoder().encode(body),
 });
 
 const okH2Response = (body = ""): Http2Response => ({
     statusCode: 200,
-    headers: new Map(),
+    headers: h2Headers([]),
     body: new TextEncoder().encode(body),
 });
 
 describe("dispatchHttp1 — host header", () => {
     it("adds a host header on the default port (no :port suffix)", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://example.com/"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("https://example.com/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.headers.get("host")).toBe("example.com");
     });
 
     it("adds a host header including a non-default port", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("http://example.com:8080/"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("http://example.com:8080/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.headers.get("host")).toBe("example.com:8080");
     });
 
     it("does not overwrite a caller-supplied host header", async () => {
         const conn = fakeHttp1(() => okResponse());
         const headers = new Map([["host", "override.example"]]);
-        await dispatchHttp1(conn, url("https://example.com/"), "GET", headers, undefined);
+        await dispatchHttp1(conn, url("https://example.com/"), "GET", headers, undefined, undefined);
         expect(conn.requests[0]?.headers.get("host")).toBe("override.example");
     });
 });
@@ -212,7 +214,7 @@ describe("dispatchHttp1 — host header", () => {
 describe("dispatchHttp1 — content-length", () => {
     it("sets content-length from a string body when none is present", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://e.com/"), "POST", new Map(), "hello");
+        await dispatchHttp1(conn, url("https://e.com/"), "POST", new Map(), "hello", undefined);
         const req = conn.requests[0]!;
         expect(req.headers.get("content-length")).toBe("5");
         expect(req.body.kind).toBe("bytes");
@@ -221,27 +223,27 @@ describe("dispatchHttp1 — content-length", () => {
     it("sets content-length from a Uint8Array body", async () => {
         const conn = fakeHttp1(() => okResponse());
         const body = new Uint8Array([1, 2, 3, 4]);
-        await dispatchHttp1(conn, url("https://e.com/"), "POST", new Map(), body);
+        await dispatchHttp1(conn, url("https://e.com/"), "POST", new Map(), body, undefined);
         expect(conn.requests[0]?.headers.get("content-length")).toBe("4");
     });
 
     it("does not set content-length when transfer-encoding is present", async () => {
         const conn = fakeHttp1(() => okResponse());
         const headers = new Map([["transfer-encoding", "chunked"]]);
-        await dispatchHttp1(conn, url("https://e.com/"), "POST", headers, "body");
+        await dispatchHttp1(conn, url("https://e.com/"), "POST", headers, "body", undefined);
         expect(conn.requests[0]?.headers.get("content-length")).toBeUndefined();
     });
 
     it("does not overwrite a caller-supplied content-length", async () => {
         const conn = fakeHttp1(() => okResponse());
         const headers = new Map([["content-length", "99"]]);
-        await dispatchHttp1(conn, url("https://e.com/"), "POST", headers, "body");
+        await dispatchHttp1(conn, url("https://e.com/"), "POST", headers, "body", undefined);
         expect(conn.requests[0]?.headers.get("content-length")).toBe("99");
     });
 
     it("omits content-length entirely when there is no body", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.headers.get("content-length")).toBeUndefined();
         expect(conn.requests[0]?.body.kind).toBe("empty");
     });
@@ -250,7 +252,7 @@ describe("dispatchHttp1 — content-length", () => {
 describe("dispatchHttp1 — request target", () => {
     it("passes the path + query as the wire url", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://e.com/a/b?x=1"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("https://e.com/a/b?x=1"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.url).toBe("/a/b?x=1");
     });
 });
@@ -264,7 +266,7 @@ describe("dispatchHttp1 — header casing", () => {
 
     it("omits headerCasing when none is supplied (http1 applies its own default)", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         expect((conn.requests[0] as { headerCasing?: string }).headerCasing).toBeUndefined();
     });
 });
@@ -274,10 +276,10 @@ describe("dispatchHttp1 — response building", () => {
         const conn = fakeHttp1(() => ({
             statusCode: 201,
             statusText: "Created",
-            headers: new Map([["content-type", "text/plain"]]),
+            headers: h1Headers([["content-type", "text/plain"]]),
             body: new TextEncoder().encode("body"),
         }));
-        const resp = await dispatchHttp1(conn, url("https://e.com/x"), "GET", new Map(), undefined);
+        const resp = await dispatchHttp1(conn, url("https://e.com/x"), "GET", new Map(), undefined, undefined);
         expect(resp.status).toBe(201);
         expect(resp.statusText).toBe("Created");
         expect(resp.url).toBe("https://e.com/x");
@@ -292,16 +294,15 @@ describe("dispatchHttp1 — response building", () => {
         // a plaintext body with content-encoding: gzip still set (what http1
         // produces post-decode). If fetch decompressed again, the bytes would be
         // corrupt and text() would throw or return garbage.
-        const { gzipSync } = require("node:zlib") as typeof import("node:zlib");
         const original = new TextEncoder().encode("already-decompressed-by-http1");
         // http1 decompresses, so the body arriving at dispatchHttp1 is plaintext.
         const conn = fakeHttp1(() => ({
             statusCode: 200,
             statusText: "OK",
-            headers: new Map([["content-encoding", "gzip"]]),
+            headers: h1Headers([["content-encoding", "gzip"]]),
             body: original,
         }));
-        const resp = await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        const resp = await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         expect(resp.headers["content-encoding"]).toBe("gzip");
         expect(await resp.text()).toBe("already-decompressed-by-http1");
         // A naive double-decompress would feed these plaintext bytes to gunzip,
@@ -316,7 +317,7 @@ describe("dispatchHttp1 — response building", () => {
         const original = new TextEncoder().encode("h2-still-compressed");
         const conn = fakeHttp2(() => ({
             statusCode: 200,
-            headers: new Map([["content-encoding", "gzip"]]),
+            headers: h2Headers([["content-encoding", "gzip"]]),
             body: gzipSync(original),
         }));
         const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, compression);
@@ -325,7 +326,7 @@ describe("dispatchHttp1 — response building", () => {
 
     it("passes an empty body kind for GET/HEAD (no body)", async () => {
         const conn = fakeHttp1(() => okResponse());
-        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        await dispatchHttp1(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         const kind = conn.requests[0]?.body as HttpBodyKind;
         expect(kind.kind).toBe("empty");
     });
@@ -335,7 +336,7 @@ describe("dispatchHttp1 — method validation", () => {
     it("accepts every FetchMethod", async () => {
         for (const m of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
             const conn = fakeHttp1(() => okResponse());
-            await dispatchHttp1(conn, url("https://e.com/"), m, new Map(), undefined);
+            await dispatchHttp1(conn, url("https://e.com/"), m, new Map(), undefined, undefined);
             expect(conn.requests[0]?.method).toBe(m as HttpMethod);
         }
     });
@@ -343,15 +344,15 @@ describe("dispatchHttp1 — method validation", () => {
     it("rejects an unsupported method with FetchError before dispatching", async () => {
         const conn = fakeHttp1(() => okResponse());
         await expect(
-            dispatchHttp1(conn, url("https://e.com/"), "TRACE", new Map(), undefined),
+            dispatchHttp1(conn, url("https://e.com/"), "TRACE", new Map(), undefined, undefined),
         ).rejects.toBeInstanceOf(FetchError);
         // Nothing hit the wire.
         expect(conn.requests).toHaveLength(0);
         try {
-            await dispatchHttp1(conn, url("https://e.com/"), "WAT", new Map(), undefined);
+            await dispatchHttp1(conn, url("https://e.com/"), "WAT", new Map(), undefined, undefined);
         } catch (err) {
             expect((err as FetchError).message).toContain("unsupported HTTP method");
-            expect((err as FetchError).details.method).toBe("WAT");
+            expect((err as FetchError).details["method"]).toBe("WAT");
         }
     });
 });
@@ -359,7 +360,7 @@ describe("dispatchHttp1 — method validation", () => {
 describe("dispatchHttp2 — pseudo-headers", () => {
     it("sets :method, :path, :scheme, :authority on the default port", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("https://example.com/a?x=1"), "GET", new Map(), undefined);
+        await dispatchHttp2(conn, url("https://example.com/a?x=1"), "GET", new Map(), undefined, undefined);
         const h = conn.requests[0]?.headers;
         expect(h?.get(":method")).toBe("GET");
         expect(h?.get(":path")).toBe("/a?x=1");
@@ -369,7 +370,7 @@ describe("dispatchHttp2 — pseudo-headers", () => {
 
     it("includes the port in :authority when non-default", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("http://example.com:9000/"), "GET", new Map(), undefined);
+        await dispatchHttp2(conn, url("http://example.com:9000/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.headers.get(":authority")).toBe("example.com:9000");
         expect(conn.requests[0]?.headers.get(":scheme")).toBe("http");
     });
@@ -382,7 +383,7 @@ describe("dispatchHttp2 — pseudo-headers", () => {
             [":scheme", "https"],
             [":authority", "custom.example"],
         ]);
-        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined, undefined);
         const h = conn.requests[0]?.headers;
         expect(h?.get(":method")).toBe("POST");
         expect(h?.get(":path")).toBe("/custom");
@@ -391,7 +392,7 @@ describe("dispatchHttp2 — pseudo-headers", () => {
 
     it("also passes method/scheme/authority/path as the structured request fields", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("https://e.com:8443/p"), "POST", new Map(), "data");
+        await dispatchHttp2(conn, url("https://e.com:8443/p"), "POST", new Map(), "data", undefined);
         const req = conn.requests[0]!;
         expect(req.method).toBe("POST");
         expect(req.scheme).toBe("https");
@@ -407,7 +408,7 @@ describe("dispatchHttp2 — host header removal", () => {
         // deterministic nginx/WAF 400 (RFC 9113 §8.3.6: :authority replaces it).
         const conn = fakeHttp2(() => okH2Response());
         const headers = new Map([["host", "example.com"]]);
-        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined, undefined);
         const h = conn.requests[0]?.headers;
         expect(h?.get(":authority")).toBe("example.com");
         expect(h?.has("host")).toBe(false);
@@ -419,7 +420,7 @@ describe("dispatchHttp2 — host header removal", () => {
             ["host", "custom.example"],
             [":authority", "custom.example"],
         ]);
-        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", headers, undefined, undefined);
         const h = conn.requests[0]?.headers;
         expect(h?.get(":authority")).toBe("custom.example");
         expect(h?.has("host")).toBe(false);
@@ -427,14 +428,14 @@ describe("dispatchHttp2 — host header removal", () => {
 
     it("sends no host header when none was supplied either", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("https://example.com/"), "GET", new Map(), undefined);
+        await dispatchHttp2(conn, url("https://example.com/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.headers.has("host")).toBe(false);
     });
 
     it("contrast: dispatchHttp1 KEEPS the host header (required on http/1.1)", async () => {
         const conn = fakeHttp1(() => okResponse());
         const headers = new Map([["host", "example.com"]]);
-        await dispatchHttp1(conn, url("https://example.com/"), "GET", headers, undefined);
+        await dispatchHttp1(conn, url("https://example.com/"), "GET", headers, undefined, undefined);
         expect(conn.requests[0]?.headers.get("host")).toBe("example.com");
     });
 });
@@ -442,20 +443,20 @@ describe("dispatchHttp2 — host header removal", () => {
 describe("dispatchHttp2 — body encoding", () => {
     it("encodes a string body to bytes", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("https://e.com/"), "POST", new Map(), "abc");
+        await dispatchHttp2(conn, url("https://e.com/"), "POST", new Map(), "abc", undefined);
         expect(conn.requests[0]?.body).toEqual(new TextEncoder().encode("abc"));
     });
 
     it("passes a Uint8Array body through unchanged", async () => {
         const conn = fakeHttp2(() => okH2Response());
         const body = new Uint8Array([9, 9, 9]);
-        await dispatchHttp2(conn, url("https://e.com/"), "POST", new Map(), body);
+        await dispatchHttp2(conn, url("https://e.com/"), "POST", new Map(), body, undefined);
         expect(conn.requests[0]?.body).toBe(body);
     });
 
     it("passes undefined body through as undefined", async () => {
         const conn = fakeHttp2(() => okH2Response());
-        await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         expect(conn.requests[0]?.body).toBeUndefined();
     });
 });
@@ -468,7 +469,7 @@ describe("dispatchHttp2 — response building", () => {
         const original = new TextEncoder().encode("h2 compressed");
         const conn = fakeHttp2(() => ({
             statusCode: 200,
-            headers: new Map([["content-encoding", "gzip"]]),
+            headers: h2Headers([["content-encoding", "gzip"]]),
             body: gzipSync(original),
         }));
         const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, compression);
@@ -477,7 +478,7 @@ describe("dispatchHttp2 — response building", () => {
 
     it("uses an empty status text for h2 (no status text on the wire)", async () => {
         const conn = fakeHttp2(() => okH2Response("x"));
-        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined);
+        const resp = await dispatchHttp2(conn, url("https://e.com/"), "GET", new Map(), undefined, undefined);
         expect(resp.statusText).toBe("");
         expect(resp.status).toBe(200);
     });
@@ -495,6 +496,7 @@ describe("dispatchHttp2 — method passthrough", () => {
             url("https://e.com/"),
             "BOGUS" as never,
             new Map(),
+            undefined,
             undefined,
         );
         expect(resp.status).toBe(200);
@@ -542,8 +544,8 @@ describe("establishHttp1OverTransport", () => {
 
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
         const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
-        expect(opts.transport).toBe(stub);
-        expect(opts.decompressionProvider).toBe(compression);
+        expect(opts["transport"]).toBe(stub);
+        expect(opts["decompressionProvider"]).toBe(compression);
     });
 
     it("omits decompressionProvider when no compression provider is injected", async () => {
@@ -584,6 +586,7 @@ describe("establishConnection — ALPN dispatch", () => {
             "example.com",
             stubEvents(),
             crypto,
+            undefined,
         );
         expect(result.protocol).toBe("http2");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
@@ -604,6 +607,7 @@ describe("establishConnection — ALPN dispatch", () => {
             "example.com",
             stubEvents(),
             crypto,
+            undefined,
         );
         expect(result.protocol).toBe("http1");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
@@ -624,6 +628,7 @@ describe("establishConnection — ALPN dispatch", () => {
             "example.com",
             stubEvents(),
             crypto,
+            undefined,
         );
         expect(result.protocol).toBe("http1");
         expect(mockConnectTls).toHaveBeenCalledTimes(1);
@@ -651,7 +656,7 @@ describe("establishConnection — ALPN dispatch", () => {
 
         expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
         const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
-        expect(opts.decompressionProvider).toBe(compression);
+        expect(opts["decompressionProvider"]).toBe(compression);
     });
 
     it("omits decompressionProvider when no compression provider is injected", async () => {
@@ -685,18 +690,19 @@ describe("establishConnection — ALPN dispatch", () => {
             "example.com",
             stubEvents(),
             crypto,
+            undefined,
         );
 
         expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
         const opts = mockConnectHttp2.mock.calls[0]![0] as Record<string, unknown>;
         // SETTINGS values are seeded from the profile.
-        expect(opts.initialSettings).toBeDefined();
+        expect(opts["initialSettings"]).toBeDefined();
         // Impersonation vectors flow through end-to-end.
-        expect(opts.settingsOrder).toEqual([1, 2, 4, 6]);
-        expect(opts.settingsGrease).toBe(true);
-        expect(opts.connectionWindowUpdate).toBe(15663105);
-        expect(opts.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
-        expect(opts.priorityFrames).toEqual([]);
+        expect(opts["settingsOrder"]).toEqual([1, 2, 4, 6]);
+        expect(opts["settingsGrease"]).toBe(true);
+        expect(opts["connectionWindowUpdate"]).toBe(15663105);
+        expect(opts["pseudoHeaderOrder"]).toEqual(["method", "authority", "scheme", "path"]);
+        expect(opts["priorityFrames"]).toEqual([]);
     });
 
     it("omits connectionWindowUpdate entirely when the profile carries none (#79)", async () => {
@@ -720,6 +726,7 @@ describe("establishConnection — ALPN dispatch", () => {
             "example.com",
             stubEvents(),
             crypto,
+            undefined,
         );
 
         expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
@@ -754,7 +761,7 @@ describe("openTcpTransport", () => {
     it("throws FetchError when called without net/dns adapters", () => {
         mockConnectTransport.mockReset();
         const parsed = parseUrl("https://example.com:8443/path");
-        expect(() => openTcpTransport(parsed)).toThrow(
+        expect(() => openTcpTransport(parsed, undefined, undefined, undefined)).toThrow(
             "openTcpTransport requires net and dns adapters",
         );
         expect(mockConnectTransport).not.toHaveBeenCalled();

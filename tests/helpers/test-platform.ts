@@ -17,9 +17,9 @@ import type {
     Net,
     DnsResolver,
     Platform,
+    Span,
     Telemetry,
     Time,
-    TimerHandle,
 } from "@browsercore/contracts";
 import { deterministicCrypto } from "./test-crypto.js";
 import { compression } from "./test-compression.js";
@@ -46,12 +46,21 @@ const time: Time = {
             setTimeout(resolve, ms);
         }),
     setTimeout: (ms, fn) => setTimeout(fn, ms),
-    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout> as TimerHandle),
+    // TimerHandle is the opaque contracts alias for a Node timeout handle —
+    // the delegation hands it straight back to the global clearTimeout.
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
 const telemetry: Telemetry = {
     logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
-    tracer: { startSpan: () => ({ setAttribute: () => ({ end: () => {} }), end: () => {} }) },
+    tracer: {
+        // Span.setAttribute chainably returns the SAME span — a stub whose
+        // attribute view is a no-op still satisfies the full Span surface.
+        startSpan: () => {
+            const span: Span = { setAttribute: () => span, end: () => {} };
+            return span;
+        },
+    },
     metrics: { add: () => {} },
 };
 
