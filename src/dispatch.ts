@@ -252,9 +252,26 @@ export async function establishConnection(
     return { protocol: "http1", id: conn.id, conn };
 }
 
-/** Establish an HTTP/1.1 connection directly over a caller-supplied transport (test seam). */
-export async function establishHttp1OverTransport(transport: Transport): Promise<PooledConnection> {
-    const conn = await connectHttp1({ transport });
+/**
+ * Establish an HTTP/1.1 connection directly over a caller-supplied transport
+ * (test seam).
+ *
+ * `compression` is threaded exactly like the real TLS path does in
+ * {@link establishConnection}: the resolved options/platform provider becomes
+ * http1's `decompressionProvider`, so a gzip/deflate/br response decodes the
+ * same way over both dial paths. When the provider is absent in both, it stays
+ * absent here — http1 then raises ContentEncodingError on a compressed
+ * response (same semantics as the real path without a provider) instead of
+ * handing back corrupt bytes.
+ */
+export async function establishHttp1OverTransport(
+    transport: Transport,
+    compression: CompressionProvider | undefined,
+): Promise<PooledConnection> {
+    const conn = await connectHttp1({
+        transport,
+        ...(compression === undefined ? {} : { decompressionProvider: compression }),
+    });
     return { protocol: "http1", id: conn.id, conn };
 }
 

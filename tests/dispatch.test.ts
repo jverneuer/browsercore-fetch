@@ -504,27 +504,60 @@ describe("dispatchHttp2 — method passthrough", () => {
 });
 
 describe("establishHttp1OverTransport", () => {
-    it("establishes an http1 pooled connection over a caller transport", async () => {
-        // Use the in-memory paired transport from the existing test fixture
-        // pattern: the http1 layer needs a Transport it can read/write. A
-        // minimal stub that never receives bytes is enough to confirm the
-        // pooled wrapper is constructed with protocol=http1.
+    /** Minimal open transport stub — http1 needs a Transport it can read/write. */
+    async function stubTransport(): Promise<Transport> {
         const { EventEmitter } = await import("node:events");
-        const stub = new EventEmitter() as unknown as import("@browsercore/transport").Transport;
+        const stub = new EventEmitter() as unknown as Transport;
         Object.defineProperty(stub, "id", { value: "t-stub" });
         Object.defineProperty(stub, "state", { value: { state: "open" } });
         stub.write = () => Promise.resolve();
         stub.read = () => new Promise(() => {});
         stub.close = () => Promise.resolve();
+        return stub;
+    }
 
+    it("establishes an http1 pooled connection over a caller transport", async () => {
+        // A minimal stub that never receives bytes is enough to confirm the
+        // pooled wrapper is constructed with protocol=http1.
+        const stub = await stubTransport();
         mockConnectHttp1.mockReset();
         mockConnectHttp1.mockResolvedValue({ id: "h1-stub", close: () => Promise.resolve() });
 
-        const pooled = await establishHttp1OverTransport(stub);
+        const pooled = await establishHttp1OverTransport(stub, undefined);
         expect(pooled.protocol).toBe("http1");
         expect(typeof pooled.id).toBe("string");
         expect(pooled.conn).toBeDefined();
         await pooled.conn.close();
+    });
+
+    it("injects the compression provider as decompressionProvider when present", async () => {
+        // Mirror of the establishConnection test above (#76): the seam dial
+        // must thread the SAME resolved provider as the real TLS path, or
+        // compressed http/1.1 responses arrive still-encoded over the seam.
+        const stub = await stubTransport();
+        mockConnectHttp1.mockReset();
+        mockConnectHttp1.mockResolvedValue({ id: "h1-seam-decomp", close: () => Promise.resolve() });
+
+        await establishHttp1OverTransport(stub, compression);
+
+        expect(mockConnectHttp1).toHaveBeenCalledTimes(1);
+        const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
+        expect(opts.transport).toBe(stub);
+        expect(opts.decompressionProvider).toBe(compression);
+    });
+
+    it("omits decompressionProvider when no compression provider is injected", async () => {
+        // Absent in both options and platform stays absent — http1 then raises
+        // ContentEncodingError on a compressed response (same semantics as the
+        // real path without a provider), never corrupt bytes.
+        const stub = await stubTransport();
+        mockConnectHttp1.mockReset();
+        mockConnectHttp1.mockResolvedValue({ id: "h1-seam-nodecomp", close: () => Promise.resolve() });
+
+        await establishHttp1OverTransport(stub, undefined);
+
+        const opts = mockConnectHttp1.mock.calls[0]![0] as Record<string, unknown>;
+        expect("decompressionProvider" in opts).toBe(false);
     });
 });
 
