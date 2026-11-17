@@ -14,18 +14,18 @@ with browser-accurate TLS + HTTP fingerprints.
 npm install @browsercore/fetch
 ```
 
-Most users want **[browsersmith](https://www.npmjs.com/package/browsersmith)** instead — the composition root that ships a ready-made Node Platform, profiles, and cookie jar. Install fetch directly when you bring your own `Platform`: custom transports, embedded runtimes, tests.
+Most users want **[browsersmith](https://www.npmjs.com/package/browsersmith)** instead. It's the composition root that ships a ready-made Node Platform, profiles, and cookie jar. Install fetch directly when you bring your own `Platform`: custom transports, embedded runtimes, tests.
 
 ## Responsibility
 
 URL parsing, connection reuse, profile loading, redirect policy, cookie
 integration, and automatic protocol selection (h2 vs h1.1 via ALPN). Top of the
-dependency stack — every other `@browsercore/*` package sits below this one.
+dependency stack: every other `@browsercore/*` package sits below this one.
 
 ## Runtime dependencies via Platform
 
 fetch has no runtime bindings of its own. Every capability it needs at
-runtime — events, TCP, DNS, crypto, compression, time — is injected through a
+runtime (events, TCP, DNS, crypto, compression, time) is injected through a
 single [`Platform`](https://github.com/jverneuer/browsercore-contracts) object
 that `browsersmith` (the composition root) assembles and passes down:
 
@@ -34,7 +34,7 @@ import { fetch } from "@browsercore/fetch";
 import { browsersmith } from "browsersmith";
 
 // browsersmith builds the Platform; fetch consumes it. No global singletons,
-// no fallback providers — fetch throws if a required capability is missing.
+// no fallback providers: fetch throws if a required capability is missing.
 const platform = browsersmith.createPlatform();
 const response = await fetch("https://example.com", { profile: "chrome-140" }, platform);
 ```
@@ -52,9 +52,9 @@ adapter):
 | compression | `platform.compression` | `options.compression` |
 | time | `platform.time` | `options.clock` |
 
-`events` is mandatory with no fallback — fetch never creates its own provider.
+`events` is mandatory and has no fallback; fetch never creates its own provider.
 
-## Time — platform.time is honored
+## Time: platform.time is honored
 
 Every timer fetch arms runs on the canonical `Clock` from
 `@browsercore/contracts`, resolved once per client as
@@ -68,7 +68,7 @@ Every timer fetch arms runs on the canonical `Clock` from
 `performance.now()`, `setTimeout`/`clearTimeout`), so the default behavior is
 unchanged. For deterministic testing, inject a manual-advance `Clock` via
 `options.clock` (or `platform.time`): both timeout kinds then fire at exact
-virtual instants with zero real timers — see `tests/deterministic-clock.test.ts`.
+virtual instants with zero real timers. See `tests/deterministic-clock.test.ts`.
 
 ```ts
 import { createClient, type Clock } from "@browsercore/fetch";
@@ -83,7 +83,7 @@ const client = createClient({ clock: manual, timeoutMs: 500 });
 import { fetch, createClient, FetchTimeoutError } from "@browsercore/fetch";
 
 // One-shot convenience fetch (creates + closes a default client).
-// Requires a Platform — see "Runtime dependencies via Platform" above.
+// Requires a Platform (see "Runtime dependencies via Platform" above).
 const response = await fetch("https://example.com", { profile: "chrome-140" }, platform);
 console.log(response.status, await response.text());
 
@@ -111,8 +111,8 @@ eviction are unaffected.
 
 Every request (or a whole client, via `FetchClientOptions.proxy`) can be
 tunneled through an HTTP CONNECT or SOCKS5/5h proxy via `@browsercore/proxy`.
-Proxied connections are pooled per origin+proxy pair — different proxies never
-share a connection — and proxy failures surface as `FetchProxyError` with the
+Proxied connections are pooled per origin+proxy pair, so different proxies never
+share a connection. Proxy failures surface as `FetchProxyError` with the
 wrapped `kind` preserved on `proxyKind`.
 
 ```ts
@@ -130,7 +130,7 @@ const r = await client.fetch("https://example.com", {
 
 | Export | Kind | Purpose |
 | --- | --- | --- |
-| `fetch()` | function | Top-level convenience — creates a default client |
+| `fetch()` | function | Top-level convenience, creates a default client |
 | `createClient()` | function | Build a reusable client with defaults |
 | `FetchClient` | interface | Reusable client (fetch + close) |
 | `FetchClientOptions` | interface | Client defaults (cookie jar, profile, timeout, Platform) |
@@ -144,16 +144,16 @@ const r = await client.fetch("https://example.com", {
 | `ProtocolError` | class | ALPN negotiation failure |
 | `FetchProxyError` | class | Proxy tunnel failure (wrapped proxy `kind` on `proxyKind`) |
 | `AbortError` | class | Request aborted via AbortSignal |
-| `ProxyConfig` / `ProxyScheme` | type re-export | Proxy endpoint shape — canonical home `@browsercore/contracts` |
-| `ProfileId` | type re-export | Browser profile id — canonical home `@browsercore/contracts` |
-| `Clock` / `TimerHandle` | type re-export | Injected time source — canonical home `@browsercore/contracts` |
+| `ProxyConfig` / `ProxyScheme` | type re-export | Proxy endpoint shape, canonical home `@browsercore/contracts` |
+| `ProfileId` | type re-export | Browser profile id, canonical home `@browsercore/contracts` |
+| `Clock` / `TimerHandle` | type re-export | Injected time source, canonical home `@browsercore/contracts` |
 | `systemClock` | const | Default `Clock` over the platform globals |
 
 The option types speak canonical `@browsercore/contracts` types
 (`ProxyConfig`, `ProfileId`, `Clock`, `Transport`, `CryptoProvider`);
 `@browsercore/proxy` and `@browsercore/profiles` re-export the same canonical
 types, so imports from either name keep compiling. One deliberate exception:
-`CookieJar` still comes from `@browsercore/cookies` — contracts' `CookieJar`
+`CookieJar` still comes from `@browsercore/cookies`. contracts' `CookieJar`
 declaration (`setCookie(url, cookie)`) is not yet reconciled with the jar
 cookies implements (`setCookie(raw, url)`); cookie reconciliation is deferred
 and guarded by drift alarms in cookies 0.2.2.
@@ -172,7 +172,7 @@ No package above `@browsercore/fetch` imports from below it.
 
 ## Contributing
 
-Contributions are welcome — bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-fetch/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
+Contributions are welcome: bug reports, reproductions, docs and code alike. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the full guide lives in the [browsersmith repo](https://github.com/jverneuer/browsersmith/blob/main/CONTRIBUTING.md). First timer? Check the [`good first issue`](https://github.com/jverneuer/browsercore-fetch/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label. Security issues: [SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
@@ -181,6 +181,6 @@ MIT
 
 <div align="center">
 
-🦄 You scrolled past the entire dependency graph to get here — that earns you a unicorn, and per unicorn statute §1 your day will now be amazing. Congratulations.
+🦄 You scrolled past the entire dependency graph to get here. That earns you a unicorn, and per unicorn statute §1 your day will now be amazing. Congratulations.
 
 </div>
