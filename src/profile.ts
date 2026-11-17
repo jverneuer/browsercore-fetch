@@ -258,8 +258,14 @@ export interface ProfileHttp2Config {
     readonly settingsOrder: readonly number[];
     /** Prepend a GREASE setting id first in the preface SETTINGS frame. */
     readonly grease: boolean;
-    /** Connection-level WINDOW_UPDATE increment after the preface; 0 = none. */
-    readonly connectionWindowUpdate: number;
+    /**
+     * Connection-level WINDOW_UPDATE increment sent after the preface
+     * SETTINGS. `undefined` → NO frame at all. Never `0`: RFC 9113 §6.9 makes
+     * a zero increment on the connection window a connection error of type
+     * PROTOCOL_ERROR — real h2 servers GOAWAY the connection on the spot
+     * (observed as the #79 GOAWAY against example.com).
+     */
+    readonly connectionWindowUpdate: number | undefined;
     /** Order of pseudo-headers in request HEADERS frames. */
     readonly pseudoHeaderOrder: readonly string[];
     /** PRIORITY frames sent during the connection preface (dependency tree). */
@@ -274,12 +280,16 @@ export interface ProfileHttp2Config {
  */
 export function profileHttp2Config(profile: BrowserProfile): ProfileHttp2Config {
     // Impersonation fields are now declared on Http2Profile directly. Each
-    // is optional; absent → RFC/browser default.
+    // is optional; absent → RFC/browser default. connectionWindowUpdate is
+    // the one field where "absent" must stay undefined (no frame): coercing
+    // it to 0 made the http2 layer emit a zero-increment connection
+    // WINDOW_UPDATE, which peers treat as a PROTOCOL_ERROR connection error
+    // (RFC 9113 §6.9) — the #79 GOAWAY.
     return {
         settings: profileHttp2Settings(profile),
         settingsOrder: profile.http2.settingsOrder ?? DEFAULT_SETTINGS_ORDER,
         grease: profile.http2.grease ?? false,
-        connectionWindowUpdate: profile.http2.connectionWindowUpdate ?? 0,
+        connectionWindowUpdate: profile.http2.connectionWindowUpdate,
         pseudoHeaderOrder: profile.http2.pseudoHeaderOrder ?? DEFAULT_PSEUDO_HEADER_ORDER,
         priorityFrames: [],
     };

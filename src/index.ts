@@ -37,8 +37,14 @@ import type { Platform } from "@browsercore/contracts";
 import type { FetchOptions, FetchResponse } from "./types.js";
 
 /**
- * Top-level convenience `fetch` — creates a default client, issues the request,
- * and closes the client. Use {@link createClient} for connection reuse.
+ * Top-level convenience `fetch` — creates a client from the same options a
+ * {@link createClient} call would receive, issues the request, and closes the
+ * client. The client is constructed IDENTICALLY to
+ * `createClient(options + platform).fetch(input, options)`: every
+ * FetchClientOptions-compatible key of `options` (profile, cookieJar,
+ * timeoutMs, proxy) plus `platform` becomes a client default, so both entry
+ * points produce byte-identical wire output for identical options (#79).
+ * Use {@link createClient} for connection reuse.
  *
  * @example
  * ```ts
@@ -59,6 +65,12 @@ export function fetch(input: string, options?: FetchOptions, platform?: Platform
     }
     if (options?.timeoutMs !== undefined) {
         defaults.timeoutMs = options.timeoutMs;
+    }
+    if (options?.proxy !== undefined) {
+        // Forwarded so pool keys + dial decisions resolve identically to the
+        // createClient path — the per-request copy below lands on the same
+        // value either way, but the constructed client must not diverge.
+        defaults.proxy = options.proxy;
     }
     if (platform !== undefined) {
         defaults.platform = platform;

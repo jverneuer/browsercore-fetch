@@ -32,6 +32,7 @@ vi.mock("../src/dispatch.js", () => ({
         id: "h2-pool-test",
         conn: { id: "h2-pool-test", close: h2Closed },
     }),
+    openPlainTcpTransport: vi.fn(),
     openProxiedTransport: vi.fn(),
     openTcpTransport: vi.fn(),
 }));
@@ -45,6 +46,7 @@ import { parseUrl } from "../src/url.js";
 import {
     establishConnection,
     establishHttp1OverTransport,
+    openPlainTcpTransport,
     openProxiedTransport,
     openTcpTransport,
 } from "../src/dispatch.js";
@@ -176,7 +178,7 @@ describe("pool — adapter error path", () => {
         );
 
         const pool = createPool({}, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+        await expect(pool.getConnection(url("https://example.com/"), undefined)).rejects.toThrow(
             "openTcpTransport requires net and dns adapters",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
@@ -190,7 +192,7 @@ describe("pool — adapter error path", () => {
 
         const net = { connect: vi.fn() } as never;
         const pool = createPool({ net }, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+        await expect(pool.getConnection(url("https://example.com/"), undefined)).rejects.toThrow(
             "dns adapter missing",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
@@ -203,18 +205,31 @@ describe("pool — adapter error path", () => {
 
         const dns = { resolve: vi.fn() } as never;
         const pool = createPool({ dns }, lookup, fallbackProfile());
-        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+        await expect(pool.getConnection(url("https://example.com/"), undefined)).rejects.toThrow(
             "net adapter missing",
         );
         expect(openTcpTransport).toHaveBeenCalledTimes(1);
         openTcpTransport.mockReset();
     });
+
+    it("propagates the plain-http dial's error (http targets use openPlainTcpTransport)", async () => {
+        openPlainTcpTransport.mockReset();
+        openPlainTcpTransport.mockRejectedValueOnce(new Error("plain dial adapters missing"));
+        const pool = createPool({}, lookup, fallbackProfile());
+        await expect(pool.getConnection(url("http://example.com/"), undefined)).rejects.toThrow(
+            "plain dial adapters missing",
+        );
+        expect(openPlainTcpTransport).toHaveBeenCalledTimes(1);
+        // The shared-bus dial was not consulted for a plain-http target.
+        expect(openTcpTransport).not.toHaveBeenCalled();
+        openPlainTcpTransport.mockReset();
+    });
 });
 
 describe("pool — production path (real net/dns)", () => {
-    it("opens a transport and establishes a connection when net and dns are provided", async () => {
+    it("opens a transport and establishes a TLS connection when net and dns are provided", async () => {
         // Provide net + dns (no transportFactory) so establishAndStore takes
-        // the production path: openTcpTransport -> establishConnection.
+        // the production https path: openTcpTransport -> establishConnection.
         const fakeTransport = new StubTransport("prod-transport");
         const prodClosed = vi.fn();
         openTcpTransport.mockResolvedValueOnce(fakeTransport);
@@ -231,7 +246,7 @@ describe("pool — production path (real net/dns)", () => {
         const crypto = { randomBytes: vi.fn() } as never;
         const pool = createPool({ net, dns, crypto }, lookup, fallbackProfile());
         try {
-            const conn = await pool.getConnection(url("http://example.com/"), undefined);
+            const conn = await pool.getConnection(url("https://example.com/"), undefined);
             expect(conn.protocol).toBe("http1");
             // openTcpTransport was called with the url, net, dns.
             expect(openTcpTransport).toHaveBeenCalledTimes(1);
@@ -242,6 +257,66 @@ describe("pool — production path (real net/dns)", () => {
         } finally {
             openTcpTransport.mockReset();
             establishConnection.mockReset();
+        }
+    });
+
+    it("throws a clear error when crypto is missing on the direct https path", async () => {
+        openTcpTransport.mockReset();
+        openTcpTransport.mockResolvedValueOnce(new StubTransport("direct"));
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        const pool = createPool({ net, dns }, lookup, fallbackProfile());
+        // https still demands a crypto provider (TLS handshake); #78 relaxes
+        // the requirement for plain http only.
+        await expect(pool.getConnection(url("https://example.com/"), undefined)).rejects.toThrow(
+            "crypto provider",
+        );
+        openTcpTransport.mockReset();
+    });
+
+    it("plain http: dials TCP and goes straight to HTTP/1.1 — no TLS, no ALPN (#78)", async () => {
+        // An http: URL on the direct path must never reach the TLS layer: the
+        // transport goes directly to establishHttp1OverTransport. Before #78
+        // the pool TLS-wrapped every scheme and plaintext targets failed with
+        // TLS record decryption errors.
+        openPlainTcpTransport.mockReset();
+        establishHttp1OverTransport.mockReset();
+        establishHttp1OverTransport.mockResolvedValue({
+            protocol: "http1" as const,
+            id: "seam-default",
+            conn: { id: "seam-default", close: vi.fn() },
+        });
+        establishConnection.mockReset();
+        const fakeTransport = new StubTransport("plain-transport");
+        const plainClosed = vi.fn();
+        openPlainTcpTransport.mockResolvedValueOnce(fakeTransport);
+        establishHttp1OverTransport.mockResolvedValueOnce({
+            protocol: "http1" as const,
+            id: "plain-conn",
+            conn: { id: "plain-conn", close: plainClosed },
+        });
+
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        const compression = {} as never;
+        // Deliberately NO crypto: plain http must not require it.
+        const pool = createPool({ net, dns, compression }, lookup, fallbackProfile());
+        try {
+            const conn = await pool.getConnection(url("http://example.com/"), undefined);
+            expect(conn.protocol).toBe("http1");
+            // The plaintext dial (private-bus TCP, see openPlainTcpTransport):
+            // transport + compression provider threaded to h1 directly.
+            expect(openPlainTcpTransport).toHaveBeenCalledTimes(1);
+            expect(establishHttp1OverTransport).toHaveBeenCalledTimes(1);
+            expect(establishHttp1OverTransport).toHaveBeenCalledWith(fakeTransport, compression);
+            // The TLS dial + path were never taken.
+            expect(openTcpTransport).not.toHaveBeenCalled();
+            expect(establishConnection).not.toHaveBeenCalled();
+            await pool.drain();
+            expect(plainClosed).toHaveBeenCalledTimes(1);
+        } finally {
+            openPlainTcpTransport.mockReset();
+            establishHttp1OverTransport.mockReset();
         }
     });
 });
@@ -293,5 +368,48 @@ describe("pool — proxied production path (real dial + TLS over the tunnel)", (
             "crypto provider",
         );
         openProxiedTransport.mockReset();
+    });
+
+    it("tunnels a plain http: target first, then speaks plaintext HTTP/1.1 over the tunnel (#78)", async () => {
+        // Proxied http: URLs keep the CONNECT tunnel (and the origin+proxy
+        // pool key), but the tunneled stream goes straight to HTTP/1.1 — TLS
+        // never applies to an http: origin, and no crypto provider is needed.
+        openProxiedTransport.mockReset();
+        establishHttp1OverTransport.mockReset();
+        establishHttp1OverTransport.mockResolvedValue({
+            protocol: "http1" as const,
+            id: "seam-default",
+            conn: { id: "seam-default", close: vi.fn() },
+        });
+        establishConnection.mockReset();
+        const tunneled = new StubTransport("tunneled-plain");
+        const plainClosed = vi.fn();
+        openProxiedTransport.mockResolvedValueOnce(tunneled);
+        establishHttp1OverTransport.mockResolvedValueOnce({
+            protocol: "http1" as const,
+            id: "proxied-plain-conn",
+            conn: { id: "proxied-plain-conn", close: plainClosed },
+        });
+
+        const net = { connect: vi.fn() } as never;
+        const dns = { resolve: vi.fn() } as never;
+        const compression = {} as never;
+        const pool = createPool({ net, dns, compression }, lookup, fallbackProfile());
+        try {
+            const conn = await pool.getConnection(url("http://example.com/"), undefined, proxy);
+            expect(conn.protocol).toBe("http1");
+            expect(openProxiedTransport).toHaveBeenCalledTimes(1);
+            // Plaintext h1 over the TUNNELED stream, with the compression
+            // provider threaded like every other dial path.
+            expect(establishHttp1OverTransport).toHaveBeenCalledTimes(1);
+            expect(establishHttp1OverTransport).toHaveBeenCalledWith(tunneled, compression);
+            // TLS was never established over the tunnel.
+            expect(establishConnection).not.toHaveBeenCalled();
+            await pool.drain();
+            expect(plainClosed).toHaveBeenCalledTimes(1);
+        } finally {
+            openProxiedTransport.mockReset();
+            establishHttp1OverTransport.mockReset();
+        }
     });
 });

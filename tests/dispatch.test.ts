@@ -698,6 +698,34 @@ describe("establishConnection — ALPN dispatch", () => {
         expect(opts.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
         expect(opts.priorityFrames).toEqual([]);
     });
+
+    it("omits connectionWindowUpdate entirely when the profile carries none (#79)", async () => {
+        // The key must be ABSENT (not undefined): the http2 layer sends a
+        // connection WINDOW_UPDATE whenever the option is present, and a
+        // zero increment is a PROTOCOL_ERROR connection error at any strict
+        // peer (RFC 9113 §6.9) — the GOAWAY real servers handed the
+        // profile-less one-shot fetch().
+        mockConnectTls.mockReset();
+        mockConnectHttp2.mockReset();
+        mockConnectTls.mockResolvedValue(fakeTlsConn("h2"));
+        mockConnectHttp2.mockResolvedValue({ id: "h2-nowin", settings: {} });
+
+        const { connectionWindowUpdate: _omitted, ...profileWithoutWindowUpdate } = fakeProfile().http2;
+        void _omitted;
+        const profile = { ...fakeProfile(), http2: profileWithoutWindowUpdate };
+
+        await establishConnection(
+            { id: "t" } as Transport,
+            profile as never,
+            "example.com",
+            stubEvents(),
+            crypto,
+        );
+
+        expect(mockConnectHttp2).toHaveBeenCalledTimes(1);
+        const opts = mockConnectHttp2.mock.calls[0]![0] as Record<string, unknown>;
+        expect("connectionWindowUpdate" in opts).toBe(false);
+    });
 });
 
 describe("openTcpTransport", () => {
