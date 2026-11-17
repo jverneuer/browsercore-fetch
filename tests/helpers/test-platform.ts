@@ -19,8 +19,7 @@ import type {
     Platform,
     Telemetry,
     Time,
-    Clock,
-    Scheduler,
+    TimerHandle,
 } from "@browsercore/contracts";
 import { deterministicCrypto } from "./test-crypto.js";
 import { compression } from "./test-compression.js";
@@ -35,18 +34,20 @@ const dns: DnsResolver = {
     lookup: async () => [{ address: "127.0.0.1", family: 4 as const }],
 };
 
-const clock: Clock = {
+// contracts 0.2.7: `Time` IS the canonical Clock — the former
+// { clock, scheduler } bundle shape is gone, and fetch now honors
+// platform.time for its timers. Real-globals delegation; tests needing
+// deterministic time inject a platform whose time is a manual clock.
+const time: Time = {
     now: () => Date.now(),
-    monotonic: () => BigInt(Date.now()) * 1_000_000n,
+    monotonic: () => performance.now(),
+    sleep: (ms) =>
+        new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+        }),
+    setTimeout: (ms, fn) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout> as TimerHandle),
 };
-
-const scheduler: Scheduler = {
-    delay: async () => {},
-    timeout: () => new AbortController().signal,
-    deadline: () => ({ signal: new AbortController().signal, expiresAt: 0n }),
-};
-
-const time: Time = { clock, scheduler };
 
 const telemetry: Telemetry = {
     logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },

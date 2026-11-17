@@ -16,15 +16,15 @@ import type {
     CompressionProvider,
     Crypto,
     DnsResolver,
-    DatagramTransport,
     EventProvider,
     Net,
     Network,
     Platform,
+    ProxyConfig,
     Telemetry,
     Time,
+    UdpSocketFactory,
 } from "@browsercore/contracts";
-import type { ProxyConfig } from "@browsercore/proxy";
 
 /** FNV-1a 64-bit offset basis — deterministic, dependency-free digest. */
 const FNV_OFFSET = 0xcbf29ce484222325n;
@@ -67,26 +67,29 @@ export function proxyIdentity(proxy: ProxyConfig): string {
  * (socks5 with a hostname target). `dns` stays genuinely `undefined` when
  * absent (single cast below) so the dialer raises its own typed error guiding
  * to `socks5h`, instead of a stub masking that path. Every other bundle is
- * required by the `Platform` type but untouched by the dialer — each is a
- * stub that names the culprit if that contract ever breaks (the same
- * pattern @browsercore/proxy's own test platform uses to prove it).
+ * untouched by the dialer — each is a throwing getter that names the culprit
+ * if that contract ever breaks (the same pattern @browsercore/proxy's own
+ * test platform uses to prove it). The throwing `time` getter is deliberate
+ * even under fetch 0.2.25's clock seam: the DIALER must not touch time — the
+ * CLIENT resolves the Clock once (client.ts) and routes its own timers.
  */
 export function proxyDialPlatform(net: Net, dns: DnsResolver | undefined): Platform {
-    // The network bundle: tcp is always required; dns may be genuinely absent
-    // (`dns as never` — the idiom @browsercore/proxy's own tests use for "the
-    // type requires it, the runtime may not have it") so the dialer raises
-    // its typed error instead of a stub masking the missing-resolver path.
-    // udp has no honest implementation here — a throwing getter names the
-    // culprit if the dialer contract ever breaks.
+    // The network bundle: tcp is what every proxy scheme dials through; dns
+    // may be genuinely absent (`dns as never` preserves "absent" through the
+    // non-optional local Network view) so the dialer raises its typed error
+    // instead of a stub masking the missing-resolver path. udp has no honest
+    // implementation here — a throwing getter names the culprit if the dialer
+    // contract ever breaks. (contracts 0.2.7 makes Platform bundles optional;
+    // the getters stay as loud named failure modes rather than silent omissions.)
     const network: Network = {
         tcp: net,
         dns: dns as never,
-        get udp(): DatagramTransport {
+        get udp(): UdpSocketFactory {
             throw new Error("unexpected access to platform.network.udp — the proxy dialer must not send datagrams");
         },
     };
-    // Every non-network bundle is required by the Platform type but untouched
-    // by the dialer — each getter is a named failure mode, never a silent stub.
+    // Every non-network bundle is untouched by the dialer — each getter is a
+    // named failure mode, never a silent stub.
     return {
         network,
         get crypto(): Crypto {

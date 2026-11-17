@@ -17,9 +17,9 @@ dependency stack — every other `@browsercore/*` package sits below this one.
 ## Runtime dependencies via Platform
 
 fetch has no runtime bindings of its own. Every capability it needs at
-runtime — events, TCP, DNS, crypto, compression — is injected through a single
-[`Platform`](https://github.com/jverneuer/browsercore-contracts) object that
-`browsersmith` (the composition root) assembles and passes down:
+runtime — events, TCP, DNS, crypto, compression, time — is injected through a
+single [`Platform`](https://github.com/jverneuer/browsercore-contracts) object
+that `browsersmith` (the composition root) assembles and passes down:
 
 ```ts
 import { fetch } from "@browsercore/fetch";
@@ -42,8 +42,32 @@ adapter):
 | DNS | `platform.network.dns` | `options.dns` |
 | crypto | `platform.crypto.provider` | `options.crypto` |
 | compression | `platform.compression` | `options.compression` |
+| time | `platform.time` | `options.clock` |
 
 `events` is mandatory with no fallback — fetch never creates its own provider.
+
+## Time — platform.time is honored
+
+Every timer fetch arms runs on the canonical `Clock` from
+`@browsercore/contracts`, resolved once per client as
+`options.clock ?? platform.time ?? systemClock`:
+
+- the **whole-request timeout** (`timeoutMs`, default 30 000) that backs
+  `FetchTimeoutError`, and
+- the **pool idle-eviction timers** (`idleTimeoutMs`, default 30 000).
+
+`systemClock` (exported) delegates to the platform globals (`Date.now()`,
+`performance.now()`, `setTimeout`/`clearTimeout`), so the default behavior is
+unchanged. For deterministic testing, inject a manual-advance `Clock` via
+`options.clock` (or `platform.time`): both timeout kinds then fire at exact
+virtual instants with zero real timers — see `tests/deterministic-clock.test.ts`.
+
+```ts
+import { createClient, type Clock } from "@browsercore/fetch";
+
+const manual: Clock = { /* now, monotonic, sleep, setTimeout, clearTimeout */ };
+const client = createClient({ clock: manual, timeoutMs: 500 });
+```
 
 ## Public API
 
@@ -112,7 +136,19 @@ const r = await client.fetch("https://example.com", {
 | `ProtocolError` | class | ALPN negotiation failure |
 | `FetchProxyError` | class | Proxy tunnel failure (wrapped proxy `kind` on `proxyKind`) |
 | `AbortError` | class | Request aborted via AbortSignal |
-| `ProxyConfig` / `ProxyScheme` | type re-export | Proxy endpoint shape (from `@browsercore/proxy`) |
+| `ProxyConfig` / `ProxyScheme` | type re-export | Proxy endpoint shape — canonical home `@browsercore/contracts` |
+| `ProfileId` | type re-export | Browser profile id — canonical home `@browsercore/contracts` |
+| `Clock` / `TimerHandle` | type re-export | Injected time source — canonical home `@browsercore/contracts` |
+| `systemClock` | const | Default `Clock` over the platform globals |
+
+The option types speak canonical `@browsercore/contracts` types
+(`ProxyConfig`, `ProfileId`, `Clock`, `Transport`, `CryptoProvider`);
+`@browsercore/proxy` and `@browsercore/profiles` re-export the same canonical
+types, so imports from either name keep compiling. One deliberate exception:
+`CookieJar` still comes from `@browsercore/cookies` — contracts' `CookieJar`
+declaration (`setCookie(url, cookie)`) is not yet reconciled with the jar
+cookies implements (`setCookie(raw, url)`); cookie reconciliation is deferred
+and guarded by drift alarms in cookies 0.2.2.
 
 ## Dependency graph
 

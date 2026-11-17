@@ -28,14 +28,16 @@
 
 import type { Transport } from "@browsercore/transport";
 import type {
+    Clock,
     CompressionProvider,
     CryptoProvider,
+    DnsResolver,
     EventProvider,
     Net,
-    DnsResolver,
+    ProfileId,
+    ProxyConfig,
 } from "@browsercore/contracts";
-import type { ProxyConfig } from "@browsercore/proxy";
-import type { BrowserProfile, ProfileId } from "@browsercore/profiles";
+import type { BrowserProfile } from "@browsercore/profiles";
 import { assertNever } from "./utils.js";
 import { FetchError, wrapProxyError } from "./errors.js";
 import {
@@ -47,7 +49,7 @@ import {
     type PooledConnection,
 } from "./dispatch.js";
 import { poolKey, type PoolKey } from "./url.js";
-import type { ParsedUrl } from "./types.js";
+import { systemClock, type ParsedUrl, type TimerHandle } from "./types.js";
 
 /** Default pooled-connection idle eviction timeout in milliseconds. */
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
@@ -94,6 +96,15 @@ export interface PoolOptions {
      * bypasses it.
      */
     crypto?: CryptoProvider;
+    /**
+     * Time + timer source — the canonical `Clock` from
+     * `@browsercore/contracts` (0.2.7). The pool's idle-eviction timers arm
+     * on it, never on a bare `setTimeout` (audit #6). The client resolves the
+     * Clock once (`options.clock ?? platform.time ?? systemClock`) and
+     * threads it here; direct `createPool` callers get {@link systemClock}.
+     * Inject a manual-advance Clock for deterministic idle-eviction tests.
+     */
+    clock?: Clock;
     /**
      * Test seam: override how the transport for an origin is established.
      * When provided, this is called instead of opening a real TCP transport +
@@ -161,7 +172,10 @@ export function createPool(
     fallbackProfile: BrowserProfile,
 ): ConnectionPool {
     const pool = new Map<PoolKey, PooledConnection>();
-    const idleTimers = new Map<PoolKey, ReturnType<typeof setTimeout>>();
+    // Idle-eviction timer handles, keyed by pool key. Opaque Clock tokens —
+    // never NodeJS.Timeout (audit #6: the pool's timers arm on the injected
+    // canonical Clock, so the handle type is whatever that Clock hands back).
+    const idleTimers = new Map<PoolKey, TimerHandle>();
     /**
      * The underlying transport for each pooled connection, keyed by pool key.
      * Tracked separately from the pooled connection (which only exposes its
@@ -169,12 +183,15 @@ export function createPool(
      */
     const poolTransports = new Map<PoolKey, Transport>();
     const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    // The client resolves the Clock once and threads it in; direct createPool
+    // callers fall back to the systemClock default (audit #6).
+    const clock: Clock = options.clock ?? systemClock;
 
     /** Clear (without resetting) the idle TTL for a pooled connection. */
     function clearIdleTimer(key: PoolKey): void {
         const existing = idleTimers.get(key);
         if (existing !== undefined) {
-            clearTimeout(existing);
+            clock.clearTimeout(existing);
             idleTimers.delete(key);
         }
     }
@@ -182,6 +199,8 @@ export function createPool(
     /**
      * Start (or reset) the idle TTL for a pooled connection. When the timer
      * fires the connection has been unused for `idleTimeoutMs`, so we evict it.
+     * Armed on the injected Clock — never a bare `setTimeout` (audit #6) — so
+     * a manual-advance test Clock evicts at an exact virtual instant.
      */
     function startIdleTimer(key: PoolKey): void {
         if (idleTimeoutMs <= 0) {
@@ -191,9 +210,9 @@ export function createPool(
         clearIdleTimer(key);
         idleTimers.set(
             key,
-            setTimeout(() => {
+            clock.setTimeout(idleTimeoutMs, () => {
                 void evict(key);
-            }, idleTimeoutMs),
+            }),
         );
     }
 
@@ -388,7 +407,7 @@ export function createPool(
                 // above, so this discard cannot race another pool mutation.
                 discardDeadEntry(key, transport, existing);
             }
-            const profile = profileId ? (lookupProfile(profileId) ?? fallbackProfile) : fallbackProfile;
+            const profile = profileId === undefined ? fallbackProfile : (lookupProfile(profileId) ?? fallbackProfile);
             const pooled = await establishAndStore(url, profile, proxy);
             return pooled;
         },
@@ -403,7 +422,7 @@ export function createPool(
             pool.clear();
             poolTransports.clear();
             for (const timer of idleTimers.values()) {
-                clearTimeout(timer);
+                clock.clearTimeout(timer);
             }
             idleTimers.clear();
             await Promise.all(entries.map(([, pooled]) => closePooled(pooled)));

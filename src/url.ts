@@ -8,7 +8,7 @@
  */
 
 import type { CookieUrl } from "@browsercore/cookies";
-import type { ProxyConfig } from "@browsercore/proxy";
+import type { ProxyConfig } from "@browsercore/contracts";
 import { FetchError } from "./errors.js";
 import { proxyIdentity } from "./proxy.js";
 import type { ParsedUrl } from "./types.js";
