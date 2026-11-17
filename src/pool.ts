@@ -71,10 +71,14 @@ export interface PoolOptions {
      */
     dns?: DnsResolver;
     /**
-     * Platform compression provider (RFC 8879 certificate compression).
-     * Injected by the application entrypoint; when present the ClientHello
-     * advertises compress_certificate and CompressedCertificate replies are
-     * expanded, when absent the tls layer strips the extension.
+     * Platform compression provider. Injected by the application entrypoint.
+     * Serves both dial paths: on the real-TLS path it carries RFC 8879
+     * certificate compression (when present the ClientHello advertises
+     * compress_certificate and CompressedCertificate replies are expanded,
+     * when absent the tls layer strips the extension), and it is http1's
+     * response-body decompression backend on every path — including the
+     * `transportFactory` seam, which has no TLS to compress but still needs
+     * gzip/deflate/br responses decoded.
      */
     compression?: CompressionProvider;
     /**
@@ -277,7 +281,10 @@ export function createPool(
             // Test seam: a caller-supplied factory yields a transport that
             // already speaks the HTTP layer's bytes (past any TLS — and any
             // proxy tunnel — the production path would have applied). Fake
-            // servers in tests speak HTTP/1.1.
+            // servers in tests speak HTTP/1.1. The compression provider is
+            // threaded with the same options/platform resolution the real
+            // path's establishConnection consumes, so compressed responses
+            // decode identically over both dial paths.
             const dialed = proxy === undefined ? { host: url.host, port: url.port } : { host: proxy.host, port: proxy.port };
             try {
                 transport = await options.transportFactory(dialed.host, dialed.port);
@@ -287,7 +294,7 @@ export function createPool(
                 // real path would apply; anything else propagates unchanged.
                 throw wrapProxyError(err);
             }
-            pooled = await establishHttp1OverTransport(transport);
+            pooled = await establishHttp1OverTransport(transport, options.compression);
         } else if (proxy === undefined) {
             // establishConnection applies the profile's HTTP/2 settings to the
             // connection when ALPN negotiates h2 — no separate step needed here.

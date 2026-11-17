@@ -312,9 +312,14 @@ export function createClient(options?: FetchClientOptions): FetchClient {
     }
     if (resolvedCrypto !== undefined) {
         poolOptions.crypto = resolvedCrypto;
-        if (resolvedCompression !== undefined) {
-            poolOptions.compression = resolvedCompression;
-        }
+    }
+    // Compression is threaded independently of crypto: it is http1's response
+    // decompression backend on BOTH dial paths, and the transport-seam path
+    // (transportFactory) needs no crypto at all. Gating it on crypto would
+    // starve the seam of the provider while the real path — which requires
+    // crypto anyway and throws without it — sees the same resolution.
+    if (resolvedCompression !== undefined) {
+        poolOptions.compression = resolvedCompression;
     }
     if (options?.transportFactory !== undefined) {
         poolOptions.transportFactory = options.transportFactory;
