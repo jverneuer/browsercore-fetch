@@ -173,6 +173,8 @@ function fakeHttp2(
             return 0n;
         },
         async close(): Promise<void> {},
+        // The fake peer acknowledges the preface SETTINGS instantly.
+        async waitForSettingsAck(_timeoutMs: number): Promise<void> {},
         requests,
     } as Http2Connection & { requests: Http2Request[] };
 }

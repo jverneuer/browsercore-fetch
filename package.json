@@ -55,7 +55,7 @@
         "@browsercore/cookies": "0.2.2",
         "@browsercore/crypto": "0.2.7",
         "@browsercore/http1": "0.2.6",
-        "@browsercore/http2": "^0.2.14",
+        "@browsercore/http2": "^0.2.15",
         "@browsercore/profiles": "^0.2.6",
         "@browsercore/proxy": "^0.1.4",
         "@browsercore/tls": "^0.4.18",

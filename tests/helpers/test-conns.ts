@@ -53,6 +53,8 @@ export function fakeHttp2Conn(id: string, onClose: OnFakeClose = () => {}): Http
         async close(): Promise<void> {
             await onClose();
         },
+        // The fake peer acknowledges the preface SETTINGS instantly.
+        async waitForSettingsAck(_timeoutMs: number): Promise<void> {},
     };
 }
 
