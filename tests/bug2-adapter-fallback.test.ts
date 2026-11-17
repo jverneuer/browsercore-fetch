@@ -270,13 +270,15 @@ describe("pool integration — Platform provides adapters", () => {
             fallbackProfile(),
         );
         try {
-            const pooled = await pool.getConnection(url("http://example.com/"), undefined);
+            // https: keeps this test on the TLS handshake path the Platform
+            // adapters must thread into (#78: http: targets now bypass TLS).
+            const pooled = await pool.getConnection(url("https://example.com/"), undefined);
             expect(pooled.protocol).toBe("http1");
 
             expect(mockConnect).toHaveBeenCalledTimes(1);
             const connectArg = mockConnect.mock.calls[0]! as ReadonlyArray<unknown>;
             expect((connectArg[0] as { host: string }).host).toBe("example.com");
-            expect((connectArg[0] as { port: number }).port).toBe(80);
+            expect((connectArg[0] as { port: number }).port).toBe(443);
             expect((connectArg[0] as { net: Net }).net).toBe(fakeNet);
             expect((connectArg[0] as { dns: DnsResolver }).dns).toBe(fakeDns);
             // The resolved adapters flowed all the way into the TLS handshake.

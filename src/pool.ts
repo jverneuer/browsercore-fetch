@@ -36,6 +36,7 @@ import { FetchError, wrapProxyError } from "./errors.js";
 import {
     establishConnection,
     establishHttp1OverTransport,
+    openPlainTcpTransport,
     openProxiedTransport,
     openTcpTransport,
     type PooledConnection,
@@ -261,17 +262,20 @@ export function createPool(
 
     /**
      * Establish + pool a new connection, returning it. The transport is opened
-     * exactly once and reused for both the protocol handshake and the
-     * pool's own transport map (so teardown can force-close the same socket).
+     * exactly once and reused for both the protocol handshake and the pool's
+     * own transport map (so teardown can force-close the same socket).
      *
-     * Three establishment paths:
+     * Establishment paths:
      * - `transportFactory` set (test seam) — the factory replaces everything
      *   below the HTTP layer, so it receives the dialed endpoint (the proxy's
      *   when proxied) and its transport goes straight to HTTP/1.1.
-     * - direct real path — TCP to the origin, then TLS.
+     * - direct real path — TCP to the origin, then the scheme branch:
+     *   `https:` TLS + ALPN dispatch; `http:` plaintext HTTP/1.1 directly
+     *   over the TCP transport (#78).
      * - proxied real path — `openProxiedTransport` dials the proxy and
-     *   tunnels; TLS is then established END-TO-END with the origin over the
-     *   tunneled stream (same `establishConnection` as the direct path).
+     *   tunnels; the same scheme branch then runs over the tunneled stream
+     *   (TLS end-to-end with the origin for `https:`, plaintext HTTP/1.1
+     *   inside the tunnel for `http:`).
      */
     async function establishAndStore(url: ParsedUrl, profile: BrowserProfile, proxy: ProxyConfig | undefined): Promise<PooledConnection> {
         const key = poolKey(url, proxy);
@@ -301,31 +305,53 @@ export function createPool(
             // net/dns/events/crypto come from Platform, threaded through
             // client → pool. openTcpTransport throws a clear error when net/dns
             // are missing, so let it run first to preserve that error path.
-            transport = await openTcpTransport(url, options.net, options.dns, options.events);
-            // crypto is required for the real-TCP path (TLS handshake + HTTP/2):
-            // throw a clear error if it is missing rather than failing later in
-            // the handshake with a confusing "crypto undefined" message.
-            if (options.crypto === undefined) {
-                throw new FetchError(
-                    "createPool requires a crypto provider for the real-TCP path. " +
-                        "Pass crypto via PoolOptions or provide a Platform.",
-                );
+            transport = url.scheme === "http"
+                ? // Plain HTTP (#78) dials on a PRIVATE event bus — see
+                  // openPlainTcpTransport. net/dns validation error paths are
+                  // identical to the shared-bus dial below.
+                  await openPlainTcpTransport(url, options.net, options.dns)
+                : await openTcpTransport(url, options.net, options.dns, options.events);
+            if (url.scheme === "http") {
+                // Plain HTTP (#78): the dialed bytes ARE the application
+                // stream — hand the transport directly to the HTTP/1.1 layer.
+                // No TLS adapter and no ALPN: h2 is TLS-only in practice, so
+                // a plaintext target has exactly one protocol to speak. Plain
+                // HTTP needs no crypto provider.
+                pooled = await establishHttp1OverTransport(transport, options.compression);
+            } else {
+                // crypto is required for the https path (TLS handshake +
+                // HTTP/2): throw a clear error if it is missing rather than
+                // failing later in the handshake with a confusing message.
+                if (options.crypto === undefined) {
+                    throw new FetchError(
+                        "createPool requires a crypto provider for the real-TCP path. " +
+                            "Pass crypto via PoolOptions or provide a Platform.",
+                    );
+                }
+                pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
             }
-            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
         } else {
             // openProxiedTransport throws a clear error when the net adapter
             // is missing and wraps proxy-handshake failures, so let it run
             // before the crypto guard to preserve those error paths.
             transport = await openProxiedTransport(url, proxy, options.net, options.dns);
-            if (options.crypto === undefined) {
-                throw new FetchError(
-                    "createPool requires a crypto provider for the proxied path. " +
-                        "Pass crypto via PoolOptions or provide a Platform.",
-                );
+            if (url.scheme === "http") {
+                // Tunneled plain HTTP (#78): the CONNECT/SOCKS tunnel is
+                // established first (proxy identity keys the pool entry as
+                // for https), then HTTP/1.1 runs in plaintext over the
+                // tunneled stream — TLS never applies to an http: origin.
+                pooled = await establishHttp1OverTransport(transport, options.compression);
+            } else {
+                if (options.crypto === undefined) {
+                    throw new FetchError(
+                        "createPool requires a crypto provider for the proxied path. " +
+                            "Pass crypto via PoolOptions or provide a Platform.",
+                    );
+                }
+                // TLS terminates at the ORIGIN, not the proxy — serverName stays
+                // the origin host and the handshake runs over the tunneled stream.
+                pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
             }
-            // TLS terminates at the ORIGIN, not the proxy — serverName stays
-            // the origin host and the handshake runs over the tunneled stream.
-            pooled = await establishConnection(transport, profile, url.host, options.events, options.crypto, options.compression);
         }
         poolTransports.set(key, transport);
         pool.set(key, pooled);

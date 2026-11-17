@@ -26,6 +26,7 @@ import {
 import { connectHttp2, type Http2Connection, type Http2Options } from "@browsercore/http2";
 import type { BrowserProfile } from "@browsercore/profiles";
 import { FetchError, wrapProxyError } from "./errors.js";
+import { InternalEventEmitter } from "./internal-emitter.js";
 import { proxyDialPlatform } from "./proxy.js";
 import {
     ALPN_PROTOCOLS,
@@ -184,7 +185,10 @@ export async function dispatchHttp2(
 }
 
 /**
- * Establish a protocol connection (HTTP/1.1 or HTTP/2) over a TLS transport.
+ * Establish a protocol connection (HTTP/1.1 or HTTP/2) over a TLS transport —
+ * the `https:` branch of the dial path. ALPN picks the wire protocol; `http:`
+ * targets never reach here (they go to
+ * {@link establishHttp1OverTransport} instead — h2 is TLS-only in practice).
  *
  * `events` and `crypto` are injected — fetch never provides its own
  * EventProvider or CryptoProvider; browsersmith (the composition root) is
@@ -253,8 +257,9 @@ export async function establishConnection(
 }
 
 /**
- * Establish an HTTP/1.1 connection directly over a caller-supplied transport
- * (test seam).
+ * Establish an HTTP/1.1 connection directly over a plaintext transport — the
+ * dial path for `http:` targets (#78: no TLS adapter, no ALPN) and for the
+ * `transportFactory` test seam.
  *
  * `compression` is threaded exactly like the real TLS path does in
  * {@link establishConnection}: the resolved options/platform provider becomes
@@ -296,6 +301,22 @@ export function openTcpTransport(url: ParsedUrl, net: Net | undefined, dns: DnsR
         );
     }
     return connectTransport({ host: url.host, port: url.port, net, dns, events });
+}
+
+/**
+ * Open a raw TCP transport for a PLAIN-HTTP target (#78).
+ *
+ * Same dial as {@link openTcpTransport} (same net/dns requirement and error
+ * paths) except the transport is built with a PRIVATE event bus: a
+ * TcpTransport's event surface IS the EventProvider it was constructed
+ * with, and the plain-http path hands the transport directly to the HTTP/1.1
+ * layer — on the shared platform bus, one connection's data/close events
+ * would reach every http1 connection on that bus (cross-talk; a one-shot
+ * client's close tore down another client's in-flight request). Same
+ * rationale as the TLS adapter's private emitter (tls-adapter.ts).
+ */
+export function openPlainTcpTransport(url: ParsedUrl, net: Net | undefined, dns: DnsResolver | undefined): Promise<Transport> {
+    return openTcpTransport(url, net, dns, new InternalEventEmitter());
 }
 
 /**
