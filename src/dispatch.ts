@@ -233,7 +233,13 @@ export async function establishConnection(
             initialSettings: h2config.settings,
             settingsOrder: h2config.settingsOrder,
             settingsGrease: h2config.grease,
-            connectionWindowUpdate: h2config.connectionWindowUpdate,
+            // Absent (not `undefined`) when the profile carries no increment:
+            // the http2 layer sends a connection WINDOW_UPDATE whenever the
+            // option is present, and a zero increment is a wire violation
+            // peers answer with GOAWAY (RFC 9113 §6.9 — the #79 failure).
+            ...(h2config.connectionWindowUpdate === undefined
+                ? {}
+                : { connectionWindowUpdate: h2config.connectionWindowUpdate }),
             priorityFrames: h2config.priorityFrames,
             pseudoHeaderOrder: h2config.pseudoHeaderOrder,
             events,

@@ -396,7 +396,9 @@ describe("profileHttp2Config", () => {
         expect(config.settings).toEqual(profileHttp2Settings(makeProfile()));
         expect(config.settingsOrder).toEqual([1, 2, 4, 6]);
         expect(config.grease).toBe(false);
-        expect(config.connectionWindowUpdate).toBe(0);
+        // Absent stays absent — coercing to 0 emitted a zero-increment
+        // connection WINDOW_UPDATE, a PROTOCOL_ERROR at strict h2 peers (#79).
+        expect(config.connectionWindowUpdate).toBeUndefined();
         expect(config.pseudoHeaderOrder).toEqual(["method", "authority", "scheme", "path"]);
         expect(config.priorityFrames).toEqual([]);
     });

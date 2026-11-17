@@ -5,9 +5,10 @@
  * The transportFactory test seam (client.test.ts, fetch.test.ts) bypasses the
  * real-TCP path, so net/dns/crypto/compression are never invoked there. They
  * are provided here so a single Platform can be injected wherever the full
- * resolution path (`options?.platform?.X`) is exercised. The crypto and
- * compression providers are the real `@browsercore/*` singletons — tests are
- * the one place that may wire concrete implementations directly.
+ * resolution path (`options?.platform?.X`) is exercised. Crypto is the
+ * deterministic test provider (test-crypto.ts) — the Node-backed provider
+ * lives in browsersmith, and `@browsercore/crypto` exports no singleton.
+ * Compression is the node:zlib-backed test provider.
  */
 
 import { EventEmitter } from "node:events";
@@ -21,7 +22,7 @@ import type {
     Clock,
     Scheduler,
 } from "@browsercore/contracts";
-import { crypto } from "@browsercore/crypto";
+import { deterministicCrypto } from "./test-crypto.js";
 import { compression } from "./test-compression.js";
 
 const net: Net = {
@@ -74,7 +75,7 @@ export function createTestPlatform(): Platform {
     const events: EventProvider = new EventEmitter();
     return {
         network: { tcp: net, dns },
-        crypto: { provider: crypto },
+        crypto: { provider: deterministicCrypto },
         compression,
         events,
         telemetry,
